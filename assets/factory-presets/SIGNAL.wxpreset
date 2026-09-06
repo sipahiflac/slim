@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<Parameters>
+  <PARAM id="ATTACK" value="0.01600000075995922"/>
+  <PARAM id="CHORUS" value="0.550000011920929"/>
+  <PARAM id="CUTOFF" value="332.3000183105469"/>
+  <PARAM id="DECAY" value="0.9280000329017639"/>
+  <PARAM id="DECIMATOR" value="0.0"/>
+  <PARAM id="DELAY_MIX" value="0.1799999922513962"/>
+  <PARAM id="DETUNE" value="0.04400000348687172"/>
+  <PARAM id="DRIFT_ALIVE" value="1.0"/>
+  <PARAM id="ENV_LOOP" value="0.0"/>
+  <PARAM id="ENV_LOOP_BEATS" value="2.0"/>
+  <PARAM id="ENV_LOOP_MS" value="500.0"/>
+  <PARAM id="ENV_LOOP_SYNC" value="1.0"/>
+  <PARAM id="GAIN" value="0.699999988079071"/>
+  <PARAM id="GLIDE" value="0.3799999952316284"/>
+  <PARAM id="LEGATO" value="0.0"/>
+  <PARAM id="OSC_MODE" value="3.0"/>
+  <PARAM id="PAN_MIX" value="0.0"/>
+  <PARAM id="RELEASE" value="0.5160000324249268"/>
+  <PARAM id="RESONANCE" value="4.399999618530273"/>
+  <PARAM id="REVERB_MIX" value="0.5199999809265137"/>
+  <PARAM id="REVERB_SIZE" value="0.0"/>
+  <PARAM id="SUSTAIN" value="1.0"/>
+  <PARAM id="FILTER_TYPE" value="0.0"/>
+  <PARAM id="OCTAVE_TRANSPOSE"/>
+  <PARAM id="RANDOM_SEED" value="0.5"/>
+  <PARAM id="UNISON_MODE"/>
+</Parameters>

@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<Parameters>
+  <PARAM id="ATTACK" value="0.5450000166893005"/>
+  <PARAM id="CHORUS" value="0.5"/>
+  <PARAM id="CUTOFF" value="10485.5"/>
+  <PARAM id="DECAY" value="1.901000142097473"/>
+  <PARAM id="DECIMATOR" value="0.0"/>
+  <PARAM id="DELAY_MIX" value="0.2199999988079071"/>
+  <PARAM id="DETUNE" value="0.1000000014901161"/>
+  <PARAM id="DRIFT_ALIVE" value="1.0"/>
+  <PARAM id="ENV_LOOP" value="1.0"/>
+  <PARAM id="ENV_LOOP_BEATS" value="1.75"/>
+  <PARAM id="ENV_LOOP_MS" value="500.0"/>
+  <PARAM id="ENV_LOOP_SYNC" value="1.0"/>
+  <PARAM id="GAIN" value="0.699999988079071"/>
+  <PARAM id="GLIDE" value="0.5699999928474426"/>
+  <PARAM id="LEGATO" value="0.0"/>
+  <PARAM id="OSC_MODE" value="1.0"/>
+  <PARAM id="PAN_MIX" value="0.0"/>
+  <PARAM id="RANDOM_SEED" value="0.6499999761581421"/>
+  <PARAM id="RELEASE" value="1.327000141143799"/>
+  <PARAM id="RESONANCE" value="4.619999885559082"/>
+  <PARAM id="REVERB_MIX" value="0.5699999928474426"/>
+  <PARAM id="REVERB_SIZE" value="0.7799999713897705"/>
+  <PARAM id="SUSTAIN" value="0.949999988079071"/>
+</Parameters>
