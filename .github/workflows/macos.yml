@@ -1,27 +1,35 @@
-# Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app and the 2G.vst3 plug-in, packed in a .dmg.
+# Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app and the 2G.vst3 plug-in.
 # Run it from the Actions tab ("Run workflow"), or push a tag like v1.0.0.
 #
-# Without secrets the .dmg is only ad-hoc signed: macOS will warn ("cannot be opened" / "damaged") for everyone
-# except the person who built it. For a build customers can just open, add these repository secrets
-# (they need a paid Apple Developer account):
-#   MACOS_CERT_P12_BASE64   "Developer ID Application" certificate exported as .p12, base64-encoded
-#   MACOS_CERT_PASSWORD     password of that .p12
-#   MACOS_SIGN_IDENTITY     e.g. Developer ID Application: Your Name (TEAMID)
-#   APPLE_ID                Apple ID e-mail used for notarisation
-#   APPLE_TEAM_ID           the 10-character team ID
-#   APPLE_APP_PASSWORD      app-specific password for that Apple ID
+# With the signing secrets below the result is a signed, notarised installer (2G-macOS.pkg) that puts 2G.app in
+# /Applications and 2G.vst3 in /Library/Audio/Plug-Ins/VST3: customers just open it. Without them it is only an
+# ad-hoc signed .dmg that macOS warns about ("cannot be opened" / "damaged") for everyone but the builder.
+#
+# Repository secrets (Settings > Secrets and variables > Actions; GitHub cannot copy them between repositories):
+#   MAC_CERT_APP_P12              "Developer ID Application" certificate (.p12), base64-encoded
+#   MAC_CERT_APP_PASSWORD         password of that .p12
+#   MAC_SIGN_APP_ID               e.g. Developer ID Application: Your Name (TEAMID)
+#   MAC_CERT_INSTALLER_P12        "Developer ID Installer" certificate (.p12), base64-encoded
+#   MAC_CERT_INSTALLER_PASSWORD   password of that .p12
+#   MAC_SIGN_INSTALLER_ID         e.g. Developer ID Installer: Your Name (TEAMID)
+#   AC_API_KEY_P8                 contents of the App Store Connect API key file (AuthKey_XXXX.p8)
+#   AC_API_KEY_ID                 that key's ID
+#   AC_API_ISSUER_ID              the issuer ID shown on the App Store Connect keys page
 name: macOS build
 
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+    # Pushing the 'mac-build' branch starts a build, so the workflow can live on a side branch of an existing
+    # repository (the "Run workflow" button only exists for workflows on the default branch).
+    branches: ['mac-build']
 
 jobs:
   build:
     runs-on: macos-14
     env:
-      HAVE_SIGNING: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.APPLE_ID != '' }}
+      HAVE_SIGNING: ${{ secrets.MAC_CERT_APP_P12 != '' && secrets.MAC_CERT_INSTALLER_P12 != '' && secrets.AC_API_KEY_P8 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,24 +52,26 @@ jobs:
           ls "$APP/Contents/Resources" | head -5
           ls "$VST/Contents/Resources" | head -5
 
-      - name: Import signing certificate
+      - name: Import signing certificates
         if: env.HAVE_SIGNING == 'true'
         run: |
           KEYCHAIN="$RUNNER_TEMP/build.keychain"
-          echo "${{ secrets.MACOS_CERT_P12_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security create-keychain -p ci "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p ci "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -P "${{ secrets.MACOS_CERT_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -k ci "$KEYCHAIN"
+          echo "${{ secrets.MAC_CERT_APP_P12 }}" | base64 --decode > "$RUNNER_TEMP/app.p12"
+          echo "${{ secrets.MAC_CERT_INSTALLER_P12 }}" | base64 --decode > "$RUNNER_TEMP/installer.p12"
+          security import "$RUNNER_TEMP/app.p12" -P "${{ secrets.MAC_CERT_APP_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security import "$RUNNER_TEMP/installer.p12" -P "${{ secrets.MAC_CERT_INSTALLER_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple:,codesign:,productbuild: -k ci "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" login.keychain
+          echo "${{ secrets.AC_API_KEY_P8 }}" > "$RUNNER_TEMP/AuthKey.p8"
 
       - name: Sign (Developer ID, hardened runtime) or ad-hoc
         run: |
           if [ "$HAVE_SIGNING" = "true" ]; then
-            IDENTITY="${{ secrets.MACOS_SIGN_IDENTITY }}"
             for item in "$VST3" "$APP"; do
-              codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$item"
+              codesign --force --deep --options runtime --timestamp --sign "${{ secrets.MAC_SIGN_APP_ID }}" "$item"
               codesign --verify --deep --strict --verbose=2 "$item"
             done
           else
@@ -69,7 +79,29 @@ jobs:
             for item in "$VST3" "$APP"; do codesign --force --deep --sign - "$item"; done
           fi
 
-      - name: Make the .dmg
+      - name: Make the signed installer (.pkg)
+        if: env.HAVE_SIGNING == 'true'
+        run: |
+          mkdir -p root-app root-vst3
+          cp -R "$APP" root-app/
+          cp -R "$VST3" root-vst3/
+          # Not relocatable: always install to the standard folders, never "update" a stray copy elsewhere.
+          for part in app vst3; do
+            pkgbuild --analyze --root "root-$part" "$part.plist"
+            plutil -replace 0.BundleIsRelocatable -bool false "$part.plist"
+          done
+          pkgbuild --root root-app --component-plist app.plist --identifier com.scrapbrainaudio.2g.app --version 1.0.0 --install-location /Applications app.pkg
+          pkgbuild --root root-vst3 --component-plist vst3.plist --identifier com.scrapbrainaudio.2g.vst3 --version 1.0.0 --install-location /Library/Audio/Plug-Ins/VST3 vst3.pkg
+          productbuild --package app.pkg --package vst3.pkg --sign "${{ secrets.MAC_SIGN_INSTALLER_ID }}" --timestamp 2G-macOS.pkg
+
+      - name: Notarise and staple
+        if: env.HAVE_SIGNING == 'true'
+        run: |
+          xcrun notarytool submit 2G-macOS.pkg --key "$RUNNER_TEMP/AuthKey.p8" --key-id "${{ secrets.AC_API_KEY_ID }}" --issuer "${{ secrets.AC_API_ISSUER_ID }}" --wait
+          xcrun stapler staple 2G-macOS.pkg
+
+      - name: Make the unsigned .dmg
+        if: env.HAVE_SIGNING != 'true'
         run: |
           mkdir stage
           cp -R "$APP" stage/
@@ -77,17 +109,13 @@ jobs:
           ln -s /Library/Audio/Plug-Ins/VST3 "stage/Drag 2G.vst3 here"
           ln -s /Applications "stage/Drag 2G.app here"
           hdiutil create -volname "2G" -srcfolder stage -ov -format UDZO 2G-macOS.dmg
-          if [ "$HAVE_SIGNING" = "true" ]; then
-            codesign --force --timestamp --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" 2G-macOS.dmg
-          fi
-
-      - name: Notarise and staple
-        if: env.HAVE_SIGNING == 'true'
-        run: |
-          xcrun notarytool submit 2G-macOS.dmg --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}" --wait
-          xcrun stapler staple 2G-macOS.dmg
 
       - uses: actions/upload-artifact@v4
         with:
           name: 2G-macOS
-          path: 2G-macOS.dmg
+          # In a public repository anyone signed in to GitHub can download artifacts: keep them for a day only.
+          retention-days: 1
+          path: |
+            2G-macOS.pkg
+            2G-macOS.dmg
+          if-no-files-found: ignore
