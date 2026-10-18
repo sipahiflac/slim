@@ -16,17 +16,21 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 include(FetchContent)
 find_package(Git REQUIRED)
+# JUCE creates a D3D device on every GPU when the first window opens. On hybrid Windows laptops that wakes the
+# idle discrete GPU and costs ~3 s each time. The patch touches a Windows-only file, so only Windows applies it.
+set(JUCE_FETCH_PATCH "")
+if(WIN32)
+    set(JUCE_FETCH_PATCH PATCH_COMMAND ${CMAKE_COMMAND}
+        -DGIT=${GIT_EXECUTABLE}
+        -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/juce-skip-headless-gpus.patch
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatchOnce.cmake)
+endif()
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
     GIT_TAG 8.0.6
     GIT_SHALLOW TRUE
-    # JUCE creates a D3D device on every GPU when the first window opens. On
-    # hybrid laptops that wakes the idle discrete GPU and costs ~3 s each time.
-    PATCH_COMMAND ${CMAKE_COMMAND}
-        -DGIT=${GIT_EXECUTABLE}
-        -DPATCH=${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches/juce-skip-headless-gpus.patch
-        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ApplyPatchOnce.cmake
+    ${JUCE_FETCH_PATCH}
 )
 FetchContent_MakeAvailable(JUCE)
 
