@@ -54,6 +54,8 @@ jobs:
 
       - name: Import signing certificates
         if: env.HAVE_SIGNING == 'true'
+        env:
+          AC_API_KEY_P8: ${{ secrets.AC_API_KEY_P8 }}
         run: |
           KEYCHAIN="$RUNNER_TEMP/build.keychain"
           security create-keychain -p ci "$KEYCHAIN"
@@ -65,7 +67,17 @@ jobs:
           security import "$RUNNER_TEMP/installer.p12" -P "${{ secrets.MAC_CERT_INSTALLER_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
           security set-key-partition-list -S apple-tool:,apple:,codesign:,productbuild: -k ci "$KEYCHAIN"
           security list-keychains -d user -s "$KEYCHAIN" login.keychain
-          echo "${{ secrets.AC_API_KEY_P8 }}" > "$RUNNER_TEMP/AuthKey.p8"
+          # The App Store Connect key is a PEM file ("-----BEGIN PRIVATE KEY-----"). It may have been stored as the
+          # PEM text itself or base64-encoded (like the certificates); accept both, otherwise notarytool fails with
+          # "invalidAsn1".
+          printf '%s' "$AC_API_KEY_P8" | tr -d '\r' > "$RUNNER_TEMP/key.raw"
+          if grep -q "BEGIN" "$RUNNER_TEMP/key.raw"; then
+            cp "$RUNNER_TEMP/key.raw" "$RUNNER_TEMP/AuthKey.p8"
+          else
+            tr -d ' \n' < "$RUNNER_TEMP/key.raw" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          fi
+          echo "Notary key header: $(head -1 "$RUNNER_TEMP/AuthKey.p8")"
+          openssl pkey -in "$RUNNER_TEMP/AuthKey.p8" -noout && echo "Notary key parses"
 
       - name: Sign (Developer ID, hardened runtime) or ad-hoc
         run: |
