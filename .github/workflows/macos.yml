@@ -1,0 +1,93 @@
+# Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app and the 2G.vst3 plug-in, packed in a .dmg.
+# Run it from the Actions tab ("Run workflow"), or push a tag like v1.0.0.
+#
+# Without secrets the .dmg is only ad-hoc signed: macOS will warn ("cannot be opened" / "damaged") for everyone
+# except the person who built it. For a build customers can just open, add these repository secrets
+# (they need a paid Apple Developer account):
+#   MACOS_CERT_P12_BASE64   "Developer ID Application" certificate exported as .p12, base64-encoded
+#   MACOS_CERT_PASSWORD     password of that .p12
+#   MACOS_SIGN_IDENTITY     e.g. Developer ID Application: Your Name (TEAMID)
+#   APPLE_ID                Apple ID e-mail used for notarisation
+#   APPLE_TEAM_ID           the 10-character team ID
+#   APPLE_APP_PASSWORD      app-specific password for that Apple ID
+name: macOS build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    runs-on: macos-14
+    env:
+      HAVE_SIGNING: ${{ secrets.MACOS_CERT_P12_BASE64 != '' && secrets.APPLE_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure (universal, macOS 11+)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build app and plug-in
+        run: cmake --build build --config Release --target SyncPhoneArtwork SyncMelodragonWebUI -j 4
+
+      - name: Locate the products
+        run: |
+          APP=$(find build -maxdepth 4 -name "2G.app" | head -1)
+          VST=$(find build -maxdepth 4 -name "2G.vst3" | head -1)
+          echo "APP=$PWD/$APP" >> "$GITHUB_ENV"
+          echo "VST3=$PWD/$VST" >> "$GITHUB_ENV"
+          echo "App: $APP"
+          echo "Plug-in: $VST"
+          lipo -archs "$APP/Contents/MacOS/2G"
+          lipo -archs "$VST/Contents/MacOS/2G"
+          ls "$APP/Contents/Resources" | head -5
+          ls "$VST/Contents/Resources" | head -5
+
+      - name: Import signing certificate
+        if: env.HAVE_SIGNING == 'true'
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/build.keychain"
+          echo "${{ secrets.MACOS_CERT_P12_BASE64 }}" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p ci "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          security import "$RUNNER_TEMP/cert.p12" -P "${{ secrets.MACOS_CERT_PASSWORD }}" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k ci "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+
+      - name: Sign (Developer ID, hardened runtime) or ad-hoc
+        run: |
+          if [ "$HAVE_SIGNING" = "true" ]; then
+            IDENTITY="${{ secrets.MACOS_SIGN_IDENTITY }}"
+            for item in "$VST3" "$APP"; do
+              codesign --force --deep --options runtime --timestamp --sign "$IDENTITY" "$item"
+              codesign --verify --deep --strict --verbose=2 "$item"
+            done
+          else
+            echo "::warning::No Apple signing secrets: ad-hoc signing only. Customers will see Gatekeeper warnings."
+            for item in "$VST3" "$APP"; do codesign --force --deep --sign - "$item"; done
+          fi
+
+      - name: Make the .dmg
+        run: |
+          mkdir stage
+          cp -R "$APP" stage/
+          cp -R "$VST3" stage/
+          ln -s /Library/Audio/Plug-Ins/VST3 "stage/Drag 2G.vst3 here"
+          ln -s /Applications "stage/Drag 2G.app here"
+          hdiutil create -volname "2G" -srcfolder stage -ov -format UDZO 2G-macOS.dmg
+          if [ "$HAVE_SIGNING" = "true" ]; then
+            codesign --force --timestamp --sign "${{ secrets.MACOS_SIGN_IDENTITY }}" 2G-macOS.dmg
+          fi
+
+      - name: Notarise and staple
+        if: env.HAVE_SIGNING == 'true'
+        run: |
+          xcrun notarytool submit 2G-macOS.dmg --apple-id "${{ secrets.APPLE_ID }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" --password "${{ secrets.APPLE_APP_PASSWORD }}" --wait
+          xcrun stapler staple 2G-macOS.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: 2G-macOS
+          path: 2G-macOS.dmg

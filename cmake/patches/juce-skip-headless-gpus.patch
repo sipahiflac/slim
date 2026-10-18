@@ -1,0 +1,42 @@
+diff --git a/modules/juce_graphics/native/juce_DirectX_windows.h b/modules/juce_graphics/native/juce_DirectX_windows.h
+index e76eccffc..0578b39e4 100644
+--- a/modules/juce_graphics/native/juce_DirectX_windows.h
++++ b/modules/juce_graphics/native/juce_DirectX_windows.h
+@@ -158,6 +158,26 @@ public:
+             return;
+         }
+ 
++        // Creating a D3D device wakes a sleeping hybrid-laptop GPU, which can take
++        // seconds. Adapters that drive no display are only ever used as a fallback,
++        // so skip them whenever some adapter has an output.
++        bool anyAdapterHasOutputs = false;
++
++        for (UINT i = 0;; ++i)
++        {
++            ComSmartPtr<IDXGIAdapter1> dxgiAdapter;
++
++            if (factory->EnumAdapters1 (i, dxgiAdapter.resetAndGetPointerAddress()) == DXGI_ERROR_NOT_FOUND)
++                break;
++
++            ComSmartPtr<IDXGIOutput> output;
++            if (SUCCEEDED (dxgiAdapter->EnumOutputs (0, output.resetAndGetPointerAddress())))
++            {
++                anyAdapterHasOutputs = true;
++                break;
++            }
++        }
++
+         for (UINT i = 0;; ++i)
+         {
+             ComSmartPtr<IDXGIAdapter1> dxgiAdapter;
+@@ -165,6 +185,10 @@ public:
+             if (factory->EnumAdapters1 (i, dxgiAdapter.resetAndGetPointerAddress()) == DXGI_ERROR_NOT_FOUND)
+                 break;
+ 
++            ComSmartPtr<IDXGIOutput> output;
++            if (anyAdapterHasOutputs && FAILED (dxgiAdapter->EnumOutputs (0, output.resetAndGetPointerAddress())))
++                continue;
++
+             if (const auto adapter = DxgiAdapter::create (d2dFactory, dxgiAdapter))
+             {
+                 adapterArray.add (adapter);

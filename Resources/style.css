@@ -1,0 +1,72 @@
+:root { --desk: #b77943; --desk-ink: #9b6033; --screen: #858b70; }
+* { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-user-drag: none; cursor: default; }
+html, body { width: 100vw; height: 100vh; overflow: hidden; background-color: var(--desk); }
+body { image-rendering: pixelated; }
+#device-container { position: absolute; left: calc(var(--view-w, 100vw) / 2); top: calc(var(--view-h, 100vh) / 2); width: 320px; height: 440px; display: grid; place-items: center; transform: translate(-50%, -50%) scale(var(--ui-scale, 1)); transform-origin: center; background: url('workbench-pixel.svg') center / 100% 100% no-repeat; }
+.workbench { position: relative; width: 300px; height: 416px; }
+.phone-artboard::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: url('telback.png') center / 100% 100% no-repeat; filter: brightness(0); opacity: .23; transform: translate(9px,11px); }
+.phone-artboard { position: absolute; left: 0; top: -92px; width: 300px; height: 580px; }
+.phone-art { position: absolute; inset: 0; z-index: 1; width: 300px; height: 580px; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+/* The LCD maps 1:1 onto the artwork grid (96 x 73 art pixels at 2 CSS px each); the bezel ring below restores the dark edge it covers. */
+#screen-frame { position: absolute; z-index: 5; left: 54px; top: 186px; width: 192px; height: 146px; overflow: hidden; background: var(--screen); box-shadow: 0 0 0 4px #3e372a; }
+#screen-spill { position: absolute; z-index: 4; left: 53px; top: 185px; width: 194px; height: 148px; pointer-events: none; color: #b6c777; opacity: 1; box-shadow: 0 0 4px 1px currentColor; filter: opacity(.17); transition: opacity 180ms ease-out, color 180ms ease-out; }
+#lcd-canvas { position: absolute; left: 0; top: 0; display: block; width: 192px; height: 146px; image-rendering: pixelated; image-rendering: crisp-edges; }
+#lcd-texture { position: absolute; left: 0; top: 0; width: 192px; height: 146px; image-rendering: pixelated; pointer-events: none; }
+#edit-sliders { position: absolute; left: 0; top: 0; width: 192px; height: 146px; z-index: 2; pointer-events: none; }
+#edit-sliders.active { pointer-events: none; }
+#edit-sliders input { position: absolute; left: 76px; width: 62px; height: 18px; appearance: none; opacity: 0; cursor: ew-resize; touch-action: none; pointer-events: auto; }
+/* LCD illumination and pixel aperture are calculated together in lcd-display.js. */
+
+.phone-key { position: absolute; z-index: 6; appearance: none; border: 0; outline: 0; background: rgba(64,57,49,0); touch-action: none; transition: transform 90ms cubic-bezier(.2,.8,.3,1), background-color 90ms linear; }
+#ai-prompt-input, #license-code-input, #sample-name-input { position: fixed; left: -8px; top: -8px; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; user-select: text; -webkit-user-select: text; }
+#key-art { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.key-socket { position: absolute; mask-size: 100% 100%; -webkit-mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat; }
+.key-face, .key-recess { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
+.key-face { z-index: 1; }
+.key-face { transform-origin: 50% 50%; transition: transform 110ms cubic-bezier(.16,1,.3,1); }
+/* A short, shallow tilt into the socket: the cap pivots rather than slides. */
+.key-face.depressed { transform: perspective(140px) translateY(.5px) rotateX(9deg) scale(.975); filter: none; transition: transform 35ms cubic-bezier(.15,.85,.25,1); }
+.key-face[data-rocker="true"] { transform-origin: 50% 50%; transition: transform 105ms cubic-bezier(.2,.75,.25,1); }
+.key-face.depressed[data-rocker="true"] { transform: perspective(240px) translateZ(-2px) scale(.985); transition: transform 45ms cubic-bezier(.15,.85,.25,1); }
+.key-face.depressed[data-rocker="true"][data-direction="up"] { transform: perspective(240px) translateZ(-2px) rotateX(4deg) scale(.985); }
+.key-face.depressed[data-rocker="true"][data-direction="down"] { transform: perspective(240px) translateZ(-2px) rotateX(-4deg) scale(.985); }
+.key-face.depressed[data-rocker="true"][data-direction="left"] { transform: perspective(240px) translateZ(-2px) rotateY(-4deg) scale(.985); }
+.key-face.depressed[data-rocker="true"][data-direction="right"] { transform: perspective(240px) translateZ(-2px) rotateY(4deg) scale(.985); }
+.key-face.depressed[data-lower="true"] { transform: perspective(140px) translateY(.75px) rotateX(12deg) scale(.96); }
+@media (prefers-reduced-motion: reduce) { .key-face { transition: none; } }
+.soft-left { left:60px; top:358px; width:46px; height:38px; border-radius:50%; }
+.soft-right { left:194px; top:358px; width:46px; height:38px; border-radius:50%; }
+.audition-key { left:66px; top:414px; width:40px; height:40px; border-radius:50%; }
+.stop-key { left:194px; top:414px; width:40px; height:40px; border-radius:50%; }
+.nav-up { left:136px; top:376px; width:28px; height:25px; }
+.nav-down { left:136px; top:427px; width:28px; height:25px; }
+.nav-left { left:112px; top:400px; width:25px; height:28px; }
+.nav-right { left:163px; top:400px; width:25px; height:28px; }
+.nav-center { left:137px; top:401px; width:26px; height:26px; }
+.desk-menu,.desk-submenu { position: fixed; z-index: 100; width: 152px; padding: 4px; color: #303a23; background: #c8cbb0; border: 1px solid #626a4e; box-shadow: 2px 2px 0 #303a2333; font: 12px 'Segoe UI',sans-serif; image-rendering: auto; }
+.desk-menu[hidden],.desk-submenu[hidden] { display: none; }
+.desk-menu button { display: flex; align-items: center; gap: 6px; width: 100%; height: 26px; padding: 0 7px; border: 0; outline: none; color: inherit; background: transparent; font: inherit; text-align: left; white-space: nowrap; cursor: default; }
+.desk-menu button:hover,.desk-menu button:focus-visible { background: #303a23; color: #c8cbb0; }
+.desk-check { flex: 0 0 12px; text-align: center; font-size: 9px; }
+.desk-arrow { margin-left: auto; font-size: 15px; }
+.desk-size-row { position: relative; }
+.desk-submenu { position: absolute; left: 100%; top: 0; width: 104px; }
+.desk-submenu.opens-left { left: auto; right: 100%; }
+.master-volume { position: absolute; z-index: 30; right: 10px; top: 11px; width: 80px; height: 16px; }
+.master-volume input { position: absolute; display: block; appearance: none; left: 24px; top: 0; width: 52px; height: 16px; margin: 0; outline: none; background: transparent; cursor: ew-resize; }
+.master-volume .volume-strip { position:absolute;top:0;left:0;width:80px;height:16px;pointer-events:none;image-rendering:pixelated; }
+.master-volume input { z-index:1; }
+.master-volume input::-webkit-slider-runnable-track { height: 16px; background: transparent; }
+.master-volume input::-webkit-slider-thumb { appearance: none; width: 1px; height: 2px; border: 0; background: transparent; }
+.master-volume input:focus-visible::-webkit-slider-runnable-track { outline: 1px solid #75472b; outline-offset: 2px; }
+
+#screen-frame.import-hover { outline: 2px dashed #29361c; outline-offset: -4px; }
+
+/* Demo recording mode (Ctrl+Shift+D): nothing but the handset. */
+html.demo-mode .master-volume, html.demo-mode .desk-menu, html.demo-mode .resize-grip { display: none !important; }
+html.demo-blue, html.demo-blue body { background-color: #0000aa !important; }
+html.demo-blue #device-container { background: none; }
+
+/* Corner grip for resizing: three rows of engraved dots at the window's bottom-right corner. */
+.resize-grip { position: fixed; left: calc(var(--view-w, 100vw) - 19px); top: calc(var(--view-h, 100vh) - 19px); width: 16px; height: 16px; z-index: 40; cursor: nwse-resize; image-rendering: pixelated; touch-action: none; }

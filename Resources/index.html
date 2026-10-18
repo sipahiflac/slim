@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en" class="booting">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Scrap Brain 2G</title>
+    <style>
+        html.booting,html.booting body{background:#1e1e1e!important}
+        html.booting body>:not(#boot-screen):not(script){visibility:hidden;opacity:0}
+        #boot-screen{position:fixed;inset:0;z-index:10000;overflow:hidden;background:#1e1e1e;transition:opacity 280ms ease-out}
+        #boot-screen canvas{position:absolute;left:0;top:0;image-rendering:pixelated}
+        #boot-screen.leaving{opacity:0;pointer-events:none}
+        @media(prefers-reduced-motion:reduce){#boot-screen{transition:none}}
+    </style>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="boot-screen" role="status" aria-label="Starting 2G" aria-live="polite"><canvas id="boot-canvas" width="192" height="128"></canvas></div>
+    <main id="device-container">
+        <section class="workbench" aria-label="Scrap Brain 2G instrument">
+            <div id="phone-artboard" class="phone-artboard">
+                <canvas id="phone-art" class="phone-art" width="150" height="290" role="img" aria-label="Scrap Brain 2G instrument"></canvas>
+                <img id="phone-art-source" src="telback.png" alt="" draggable="false" hidden>
+                <img id="phone-buttons-source" src="telbuttons.png" alt="" draggable="false" hidden>
+                <div id="key-art" aria-hidden="true"></div>
+
+                <div id="screen-spill" aria-hidden="true"></div>
+                <div id="screen-frame">
+                    <canvas id="lcd-canvas" width="96" height="73"></canvas>
+                    <div id="edit-sliders" aria-hidden="true"></div>
+                    <canvas id="lcd-texture" width="192" height="146" aria-hidden="true"></canvas>
+                </div>
+                <textarea id="ai-prompt-input" maxlength="450" aria-label="AI sound prompt" spellcheck="false"></textarea>
+                <textarea id="license-code-input" maxlength="64" aria-label="License code" spellcheck="false" autocomplete="off" autocapitalize="characters"></textarea>
+                <textarea id="sample-name-input" maxlength="28" aria-label="Sample name" spellcheck="false" autocomplete="off"></textarea>
+
+                <button class="phone-key soft-left" data-action="enter" aria-label="Select"></button>
+                <button class="phone-key soft-right" data-action="escape" aria-label="Exit"></button>
+                <button class="phone-key audition-key" data-note="60" aria-label="Audition selected voice"></button>
+                <button class="phone-key stop-key" data-action="stop" aria-label="Stop sound"></button>
+
+                <button class="phone-key nav-up" data-action="up" aria-label="Up"></button>
+                <button class="phone-key nav-left" data-action="left" aria-label="Left"></button>
+                <button class="phone-key nav-center" data-action="enter" aria-label="OK"></button>
+                <button class="phone-key nav-right" data-action="right" aria-label="Right"></button>
+                <button class="phone-key nav-down" data-action="down" aria-label="Down"></button>
+
+            </div>
+        </section>
+    </main>
+    <script src="boot.js"></script>
+    <script src="lcd-display.js"></script>
+    <script src="mascot.js"></script>
+    <script src="native-bridge.js"></script>
+    <script src="ui-scale.js"></script>
+    <script src="screenshot-export.js"></script>
+    <script src="snake.js"></script>
+    <script src="billiards.js"></script>
+    <script src="lcd-text.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
