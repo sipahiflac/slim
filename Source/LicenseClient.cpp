@@ -3,6 +3,7 @@
 #include <cstring>
 
 #if JUCE_MAC
+ #include <CommonCrypto/CommonDigest.h>
  #include <CoreFoundation/CoreFoundation.h>
  #include <IOKit/IOKitLib.h>
  #include <sys/stat.h>
@@ -96,7 +97,9 @@ juce::String LicenseClient::deviceId()
         const auto guid = uuid.trim().toLowerCase().removeCharacters("{}-");
         if (guid.length() != 32 || !guid.containsOnly("0123456789abcdef")) return {};
         const auto input = "Melodragon2G/device/v1:" + guid;
-        return juce::SHA256(input.toRawUTF8(), input.getNumBytesAsUTF8()).toHexString().toLowerCase();
+        unsigned char digest[CC_SHA256_DIGEST_LENGTH]{};
+        CC_SHA256(input.toRawUTF8(), (CC_LONG) input.getNumBytesAsUTF8(), digest); // juce::SHA256 is not in juce_core
+        return juce::String::toHexString(digest, sizeof(digest), 0).toLowerCase();
        #else
         return {};
        #endif
