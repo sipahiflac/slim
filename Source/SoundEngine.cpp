@@ -611,8 +611,8 @@ juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
     generated.oneShotBody = prepared.oneShot;
     generated.playbackMode = prepared.oneShot ? PlaybackMode::OneShot : PlaybackMode::ForceLoop;
     generated.loopRegions = prepared.loopRegions;
-    generated.selectedLoop = std::make_shared<std::atomic<int>>(
-        prepared.oneShot || prepared.loopRegions.empty() ? 0 : 1);
+    // Loops are found and offered, but a new sound starts with Loop Off; the user chooses one in the editor.
+    generated.selectedLoop = std::make_shared<std::atomic<int>>(0);
     generated.loopStart = prepared.loopStart;
     generated.loopEnd = prepared.oneShot ? 0 : prepared.loopEnd;
     generated.defaultParams = { 10, 1, 3, 5, 1, 10, 5 };

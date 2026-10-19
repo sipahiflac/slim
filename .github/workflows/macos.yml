@@ -1,8 +1,8 @@
-# Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app and the 2G.vst3 plug-in.
+# Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app, the 2G.vst3 plug-in and the 2G.component Audio Unit.
 # Run it from the Actions tab ("Run workflow"), or push a tag like v1.0.0.
 #
 # With the signing secrets below the result is a signed, notarised installer (2G-macOS.pkg) that puts 2G.app in
-# /Applications and 2G.vst3 in /Library/Audio/Plug-Ins/VST3: customers just open it. Without them it is only an
+# /Applications, 2G.vst3 in /Library/Audio/Plug-Ins/VST3 and 2G.component in /Library/Audio/Plug-Ins/Components: customers just open it. Without them it is only an
 # ad-hoc signed .dmg that macOS warns about ("cannot be opened" / "damaged") for everyone but the builder.
 #
 # Repository secrets (Settings > Secrets and variables > Actions; GitHub cannot copy them between repositories):
@@ -45,6 +45,10 @@ jobs:
           VST=$(find build -maxdepth 4 -name "2G.vst3" | head -1)
           echo "APP=$PWD/$APP" >> "$GITHUB_ENV"
           echo "VST3=$PWD/$VST" >> "$GITHUB_ENV"
+          AU=$(find build -maxdepth 4 -name "2G.component" | head -1)
+          echo "AU=$PWD/$AU" >> "$GITHUB_ENV"
+          echo "Audio Unit: $AU"
+          lipo -archs "$AU/Contents/MacOS/2G"
           echo "App: $APP"
           echo "Plug-in: $VST"
           lipo -archs "$APP/Contents/MacOS/2G"
@@ -82,29 +86,31 @@ jobs:
       - name: Sign (Developer ID, hardened runtime) or ad-hoc
         run: |
           if [ "$HAVE_SIGNING" = "true" ]; then
-            for item in "$VST3" "$APP"; do
+            for item in "$VST3" "$AU" "$APP"; do
               codesign --force --deep --options runtime --timestamp --sign "${{ secrets.MAC_SIGN_APP_ID }}" "$item"
               codesign --verify --deep --strict --verbose=2 "$item"
             done
           else
             echo "::warning::No Apple signing secrets: ad-hoc signing only. Customers will see Gatekeeper warnings."
-            for item in "$VST3" "$APP"; do codesign --force --deep --sign - "$item"; done
+            for item in "$VST3" "$AU" "$APP"; do codesign --force --deep --sign - "$item"; done
           fi
 
       - name: Make the signed installer (.pkg)
         if: env.HAVE_SIGNING == 'true'
         run: |
-          mkdir -p root-app root-vst3
+          mkdir -p root-app root-vst3 root-au
           cp -R "$APP" root-app/
           cp -R "$VST3" root-vst3/
+          cp -R "$AU" root-au/
           # Not relocatable: always install to the standard folders, never "update" a stray copy elsewhere.
-          for part in app vst3; do
+          for part in app vst3 au; do
             pkgbuild --analyze --root "root-$part" "$part.plist"
             plutil -replace 0.BundleIsRelocatable -bool false "$part.plist"
           done
           pkgbuild --root root-app --component-plist app.plist --identifier com.scrapbrainaudio.2g.app --version 1.0.0 --install-location /Applications app.pkg
           pkgbuild --root root-vst3 --component-plist vst3.plist --identifier com.scrapbrainaudio.2g.vst3 --version 1.0.0 --install-location /Library/Audio/Plug-Ins/VST3 vst3.pkg
-          productbuild --package app.pkg --package vst3.pkg --sign "${{ secrets.MAC_SIGN_INSTALLER_ID }}" --timestamp 2G-macOS.pkg
+          pkgbuild --root root-au --component-plist au.plist --identifier com.scrapbrainaudio.2g.au --version 1.0.0 --install-location /Library/Audio/Plug-Ins/Components au.pkg
+          productbuild --package app.pkg --package vst3.pkg --package au.pkg --sign "${{ secrets.MAC_SIGN_INSTALLER_ID }}" --timestamp 2G-macOS.pkg
 
       - name: Notarise and staple
         if: env.HAVE_SIGNING == 'true'
@@ -118,7 +124,9 @@ jobs:
           mkdir stage
           cp -R "$APP" stage/
           cp -R "$VST3" stage/
+          cp -R "$AU" stage/
           ln -s /Library/Audio/Plug-Ins/VST3 "stage/Drag 2G.vst3 here"
+          ln -s /Library/Audio/Plug-Ins/Components "stage/Drag 2G.component here"
           ln -s /Applications "stage/Drag 2G.app here"
           hdiutil create -volname "2G" -srcfolder stage -ov -format UDZO 2G-macOS.dmg
 

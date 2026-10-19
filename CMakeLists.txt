@@ -119,6 +119,12 @@ add_custom_target(SyncPhoneArtwork ALL
 )
 add_dependencies(SyncPhoneArtwork FakePhoneScreen)
 
+# VST3 everywhere; on macOS also an Audio Unit (Logic, GarageBand). AU needs checking with auval on a Mac.
+if(APPLE)
+    set(PLUGIN_FORMATS VST3 AU)
+else()
+    set(PLUGIN_FORMATS VST3)
+endif()
 juce_add_plugin(Melodragon2G
     COMPANY_NAME "Scrap Brain Audio"
     COMPANY_COPYRIGHT "Copyright (c) 2026 Scrap Brain Audio"
@@ -129,7 +135,7 @@ juce_add_plugin(Melodragon2G
     PLUGIN_MANUFACTURER_CODE ScBA
     PLUGIN_CODE Md2G
     DESCRIPTION "2G phone speaker sampler instrument"
-    FORMATS VST3
+    FORMATS ${PLUGIN_FORMATS}
     VST3_CATEGORIES Instrument Synth
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
@@ -204,3 +210,15 @@ add_custom_target(SyncMelodragonWebUI ALL
     COMMENT "Bundling the 2G phone WebGUI into the VST3"
 )
 add_dependencies(SyncMelodragonWebUI Melodragon2G_VST3)
+if(APPLE)
+    # The Audio Unit bundle carries the same web UI.
+    add_dependencies(SyncMelodragonWebUI Melodragon2G_AU)
+    add_custom_command(TARGET SyncMelodragonWebUI POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Melodragon2G_AU>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/Resources" "$<TARGET_FILE_DIR:Melodragon2G_AU>/../Resources"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/telback.png" "${CMAKE_CURRENT_SOURCE_DIR}/Source/telbuttons.png"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Source/buttondown.wav" "${CMAKE_CURRENT_SOURCE_DIR}/Source/buttonup.wav"
+            "$<TARGET_FILE_DIR:Melodragon2G_AU>/../Resources"
+        COMMENT "Bundling the 2G phone WebGUI into the Audio Unit")
+endif()

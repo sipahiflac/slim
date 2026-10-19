@@ -358,29 +358,41 @@ void fitSeam(const std::vector<float>& audio, LoopRegion& loop)
     loop.seamCorrelation = (float)seamCorrelation(audio, loop.start, loop.end, loop.crossfade);
 }
 
-std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
+// How demanding a pass is. The strict pass offers only loops that cannot be heard. The relaxed pass exists for
+// short sounds: loops are off by default and the user turns one on by choice, so a good-enough loop is worth
+// having; it still has a floor (nothing under 0.35 s of sound, nothing under 0.15 s of loop).
+struct Tuning
+{
+    double minSound, minRegion, minCrossfade, loopShare, minLoopFloor, minLoopCeil;
+    bool requireSteadyCore;
+    double maxNear, maxSeamLevel, maxJump, maxRange, maxLevelStep, minTonal, noisyNear, noisyLevel, extraBar;
+};
+constexpr Tuning kStrict { 1.0, 0.8, 0.030, 0.45, 0.5, 2.0, true, 0.9, 1.5, 9.0, 6.0, 1.0, 0.75, 0.35, 1.0, 0.75 };
+constexpr Tuning kRelaxed { 0.35, 0.22, 0.020, 0.5, 0.15, 1.2, false, 1.4, 3.5, 16.0, 14.0, 3.0, 0.55, 0.7, 2.5, 0.55 };
+
+std::vector<LoopRegion> findLoopsWith(const std::vector<float>& audio, int maxLoops, const Tuning& t)
 {
     // A loop is only offered when it cannot be heard: a held, steady part of the sound, a long lap, and a seam
     // whose level, spectrum and waveform all match. Anything less returns no loop and the sound plays as a
     // one-shot, which is always better than a loop that clicks, pumps or stutters.
     std::vector<LoopRegion> result;
     const int count = (int)audio.size();
-    if (count < samplesFor(1.0) || maxLoops <= 0)
+    if (count < samplesFor(t.minSound) || maxLoops <= 0)
         return result;
 
     // 1. Where a loop may live: the steady part of the held note, after the onset.
     const int onsetEnd = findOnsetEnd(audio);
     const int contentEnd = findContentEnd(audio, onsetEnd);
     const auto sustain = findSustainSpan(audio, onsetEnd, contentEnd);
-    const auto core = findSteadyCore(audio, sustain.first, sustain.second);
+    const auto core = t.requireSteadyCore ? findSteadyCore(audio, sustain.first, sustain.second) : sustain;
     const int regionStart = std::max(core.first, onsetEnd + samplesFor(0.03));
     const int regionEnd = core.second - samplesFor(0.02);
-    if (regionEnd - regionStart < samplesFor(0.8)) // no steady part: a decaying or very short sound
+    if (regionEnd - regionStart < samplesFor(t.minRegion)) // no usable part: a decaying or very short sound
         return result;
-    const int minCrossfade = samplesFor(0.030);
+    const int minCrossfade = samplesFor(t.minCrossfade);
     // Laps shorter than half a second are heard as a stutter or a tremolo however clean the seam is; with more
     // steady sound available, a lap takes at least 45% of it.
-    const int minLoop = std::clamp((regionEnd - regionStart) * 45 / 100, samplesFor(0.5), samplesFor(2.0));
+    const int minLoop = std::clamp((int)((regionEnd - regionStart) * t.loopShare), samplesFor(t.minLoopFloor), samplesFor(t.minLoopCeil));
     if (regionEnd - regionStart < minLoop + minCrossfade)
         return result;
 
@@ -458,13 +470,13 @@ std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
             const double nearDistance = nearSum / nearWeight / pairDistance;
             const double seamLevelDb = levelSum / nearWeight;
             // Hard limits first: the two sides of the seam must sound alike and sit at the same level.
-            if (nearDistance > 0.9 || seamLevelDb > 1.5) continue;
+            if (nearDistance > t.maxNear || seamLevelDb > t.maxSeamLevel) continue;
 
             // Inside the loop: a breath burst or glitch repeats on every lap, and a level swing turns the
             // loop into a pulse.
             const double worstJump = jumpMax.query(i + 1, j);
             const double levelRange = levelMax.query(i, j) + levelMin.query(i, j);
-            if (worstJump > 9.0 || levelRange > 6.0) continue;
+            if (worstJump > t.maxJump || levelRange > t.maxRange) continue;
 
             double wideSum = 0.0, wideWeight = 0.0;
             for (int k = -wideK; k <= wideK; k += 2)
@@ -520,9 +532,9 @@ std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
                                           - levelDb(audio, loop.end - loop.crossfade, loop.end));
         // Tonal material must line up as a waveform; noise-like material (breath, air) cannot, so there the
         // spectrum and level have to match very closely instead.
-        const bool tonalSeam = loop.seamCorrelation >= 0.75f;
-        const bool noisySeam = candidate.nearDistance <= 0.35 && candidate.levelDb <= 1.0;
-        if (levelStep > 1.0 || !(tonalSeam || noisySeam)) continue;
+        const bool tonalSeam = loop.seamCorrelation >= (float)t.minTonal;
+        const bool noisySeam = candidate.nearDistance <= t.noisyNear && candidate.levelDb <= t.noisyLevel;
+        if (levelStep > t.maxLevelStep || !(tonalSeam || noisySeam)) continue;
 
         const int length = loop.end - loop.start;
         bool distinct = true;
@@ -538,11 +550,18 @@ std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
     // The best loop always stays; extra choices must have a seam that is nearly as clean.
     if (result.size() > 1)
     {
-        const float bar = std::max(0.75f, result.front().seamCorrelation - 0.1f);
+        const float bar = std::max((float)t.extraBar, result.front().seamCorrelation - 0.1f);
         result.erase(std::remove_if(result.begin() + 1, result.end(),
                                     [bar](const LoopRegion& loop) { return loop.seamCorrelation < bar; }),
                      result.end());
     }
     return result;
+}
+
+std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
+{
+    auto loops = findLoopsWith(audio, maxLoops, kStrict);
+    if (loops.empty()) loops = findLoopsWith(audio, maxLoops, kRelaxed);
+    return loops;
 }
 }
