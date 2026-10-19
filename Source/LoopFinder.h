@@ -11,6 +11,7 @@ struct LoopRegion
     int end = 0;
     int crossfade = 0;            // 0 = let playback pick a short default
     float seamCorrelation = 1.0f; // similarity of the two crossfaded spans, 0..1
+    bool confident = true;        // passed the strict checks; false = a good-enough loop from the relaxed pass (offered, not on by default)
 };
 
 namespace LoopFinder

@@ -321,7 +321,7 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         }
         analyseGeneratedPlayback(prepared);
 
-        int selectedLoop = 0; // Off unless the saved settings say otherwise
+        int selectedLoop = prepared.loopRegions.empty() || !prepared.loopRegions.front().confident ? 0 : 1;
         VoiceParams savedParams { 10, 1, 3, 5, 1, 10, 5 };
         float trimStart = 0.0f, trimEnd = 1.0f;
         juce::String savedName; // a name the user typed in the editor wins over the prompt

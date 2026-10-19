@@ -561,7 +561,11 @@ std::vector<LoopRegion> findLoopsWith(const std::vector<float>& audio, int maxLo
 std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
 {
     auto loops = findLoopsWith(audio, maxLoops, kStrict);
-    if (loops.empty()) loops = findLoopsWith(audio, maxLoops, kRelaxed);
+    if (loops.empty())
+    {
+        loops = findLoopsWith(audio, maxLoops, kRelaxed);
+        for (auto& loop : loops) loop.confident = false;
+    }
     return loops;
 }
 }
