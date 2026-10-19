@@ -214,6 +214,23 @@
     let saved=null;if(!plugin)try{saved=localStorage.getItem('2g-master-volume');}catch(_){}
     if(saved!==null&&Number.isFinite(Number(saved))){slider.value=String(Math.max(0,Math.min(200,Number(saved))));setVolume();}
     else window.__JUCE__?.backend?.getNativeFunction?.('getMasterVolume')?.().then(value=>{if(!volumeTouched)applyVolume(value);}).catch(error=>console.warn(error.message));
+    // "BYPASSED": a faint engraved tag, top left, only while the speaker model is off (B key). Same tiny 3x5 face
+    // idea as the labels elsewhere on the desk; quiet on purpose.
+    const bypass=document.createElement('canvas');bypass.className='speaker-bypass';bypass.width=32;bypass.height=7;bypass.hidden=true;
+    bypass.setAttribute('aria-label','Speaker model bypassed');scene.appendChild(bypass);
+    (()=>{
+        const g=bypass.getContext('2d');
+        const glyphs={B:'110 101 110 101 110',Y:'101 101 010 010 010',P:'110 101 110 100 100',A:'010 101 111 101 101',
+            S:'011 100 010 001 110',E:'111 100 110 100 111',D:'110 101 101 101 110'};
+        let x=0;
+        for(const ch of 'BYPASSED'){
+            glyphs[ch].split(' ').forEach((row,r)=>{for(let c=0;c<3;c++)if(row[c]==='1'){
+                g.fillStyle='#c79a66';g.fillRect(x+c,r+1,1,1);   // light edge below
+                g.fillStyle='#5b3926';g.fillRect(x+c,r,1,1);}});  // dark engraving
+            x+=4;
+        }
+    })();
+    window.setSpeakerBypassed=on=>{bypass.hidden=!on;};
     paintVolume();
     if(window.__JUCE__?.backend?.getNativeFunction?.('setUiScale'))selectSize(selected).finally(()=>setTimeout(()=>{followWindow=true;},800));
     else followWindow=true;

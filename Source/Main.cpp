@@ -52,6 +52,15 @@ public:
             JUCEApplication::getInstance()->systemRequestedQuit();
         }
 
+        // Coming back to the window (alt-tab, clicking the title bar) puts the keyboard straight into the page.
+        void activeWindowStatusChanged() override
+        {
+            DocumentWindow::activeWindowStatusChanged();
+            if (isActiveWindow())
+                if (auto* content = dynamic_cast<MainComponent*>(getContentComponent()))
+                    content->focusWebView();
+        }
+
     private:
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
     };

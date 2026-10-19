@@ -11,9 +11,8 @@ struct Frame { double midi = 0, confidence = 0; };
 
 // YIN difference/CMND, first threshold minimum and parabolic interpolation.
 // Analysis only: never called from the realtime render callback.
-inline Frame frame(const std::vector<float>& audio, int start, double rate)
+inline Frame frame(const std::vector<float>& audio, int start, double rate, int window = 2048, double threshold = .15)
 {
-    constexpr int window = 2048;
     const int low = std::max(2, (int)(rate / 3200.0)), high = (int)std::ceil(rate / 25.0);
     if (start < 0 || start + window + high >= (int)audio.size()) return {};
     std::vector<double> cmnd((size_t)high + 1, 1);
@@ -30,7 +29,7 @@ inline Frame frame(const std::vector<float>& audio, int start, double rate)
         cmnd[(size_t)lag] = sum > 1e-15 ? difference * lag / sum : 1;
     }
     int lag = 0;
-    for (int t = low; t < high; ++t) if (cmnd[(size_t)t] < .15) {
+    for (int t = low; t < high; ++t) if (cmnd[(size_t)t] < threshold) {
         lag = t;
         while (lag + 1 < high && cmnd[(size_t)(lag + 1)] < cmnd[(size_t)lag]) ++lag;
         break;
@@ -72,6 +71,61 @@ inline Frame frame(const std::vector<float>& audio, int start, double rate)
     }
     const double frequency = rate / (.5*(left+right));
     return {69 + 12*std::log2(frequency/440.0), std::clamp(1-cmnd[(size_t)lag], 0.0, 1.0)};
+}
+
+// The analysis behind the root screen's "Auto", run on what the user kept after trimming. The automatic pass
+// at generation time is strict on purpose (drums and noise must not get a root note); here the user asked for a
+// pitch, so it listens to the whole selection, accepts short selections, and takes a weaker but agreeing majority.
+inline Result analyseSelection(const std::vector<float>& audio, double rate = 16000)
+{
+    Result result;
+    const int size = (int)audio.size(), high = (int)std::ceil(rate/25.0);
+    const int window = std::min(2048, size - high - 2);
+    if (window < 512) return result; // not even a few periods of a low note fit
+    const int last = size - window - high - 1;
+    if (last < 0) return result;
+    const int first = std::min(last, (int)(.02*rate));
+    const int step = std::max(1, (int)(.02*rate));
+    const int count = std::min(24, 1 + (last-first)/step);
+    std::vector<int> positions;
+    std::vector<double> energies;
+    double peakEnergy = 0;
+    for (int i=0;i<count;++i) {
+        const int start = first + (last-first)*i/std::max(1,count-1);
+        double energy = 0;
+        for (int j=0;j<window;++j) energy += (double)audio[(size_t)(start+j)]*audio[(size_t)(start+j)];
+        energy /= window;
+        positions.push_back(start); energies.push_back(energy); peakEnergy=std::max(peakEnergy,energy);
+    }
+    std::vector<Frame> voiced;
+    int eligible = 0;
+    for (int i=0;i<count;++i) {
+        if (energies[(size_t)i] < std::max(1e-9, peakEnergy*.003)) continue;
+        ++eligible;
+        const auto pitch = frame(audio, positions[(size_t)i], rate, window, .35);
+        if (pitch.confidence >= .55) voiced.push_back(pitch);
+    }
+    if (voiced.empty()) return result;
+    std::vector<Frame> best;
+    for (const auto& centre : voiced) {
+        std::vector<Frame> group;
+        for (const auto& value : voiced) if (std::abs(value.midi-centre.midi) <= .6) group.push_back(value);
+        if (group.size() > best.size()) best = std::move(group);
+    }
+    std::sort(best.begin(), best.end(), [](auto a, auto b){return a.midi<b.midi;});
+    const double midi = best[best.size()/2].midi;
+    std::vector<double> deviations;
+    double periodicity = 0;
+    for (auto value : best) { deviations.push_back(std::abs(value.midi-midi)); periodicity+=value.confidence; }
+    std::sort(deviations.begin(), deviations.end());
+    const double stability = std::exp(-deviations[deviations.size()/2]/.75);
+    result.confidence = (float)(periodicity/best.size()*stability*best.size()/std::max(1,eligible));
+    result.pitched = (int)best.size() >= std::min(2, count) && result.confidence >= .3f;
+    if (result.pitched) {
+        result.note = std::clamp((int)std::lround(midi), 0, 127);
+        result.cents = (float)((midi-result.note)*100);
+    }
+    return result;
 }
 
 inline Result analyse(const std::vector<float>& audio, double rate = 16000)

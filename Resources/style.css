@@ -64,9 +64,13 @@ body { image-rendering: pixelated; }
 #screen-frame.import-hover { outline: 2px dashed #29361c; outline-offset: -4px; }
 
 /* Demo recording mode (Ctrl+Shift+D): nothing but the handset. */
-html.demo-mode .master-volume, html.demo-mode .desk-menu, html.demo-mode .resize-grip { display: none !important; }
+html.demo-mode .master-volume, html.demo-mode .desk-menu, html.demo-mode .resize-grip, html.demo-mode .speaker-bypass { display: none !important; }
 html.demo-blue, html.demo-blue body { background-color: #0000aa !important; }
 html.demo-blue #device-container { background: none; }
 
 /* Corner grip for resizing: three rows of engraved dots at the window's bottom-right corner. */
 .resize-grip { position: fixed; left: calc(var(--view-w, 100vw) - 19px); top: calc(var(--view-h, 100vh) - 19px); width: 16px; height: 16px; z-index: 40; cursor: nwse-resize; image-rendering: pixelated; touch-action: none; }
+
+/* Faint "BYPASSED" tag while the speaker model is off. */
+.speaker-bypass { position: absolute; z-index: 30; left: 10px; top: 14px; width: 64px; height: 14px; image-rendering: pixelated; pointer-events: none; opacity: .6; }
+.speaker-bypass[hidden] { display: none; }

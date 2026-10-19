@@ -74,6 +74,7 @@ struct PreparedGeneratedSample
     std::vector<float> processed;
     int originalOffset = 0; // See Instrument::originalOffset.
     float outputGain = 1.0f; // Load-time level calibration, measured off the audio thread.
+    float trimStart = 0.0f, trimEnd = 1.0f; // The part of `processed` the sound plays, 0..1 (set when copied for analysis).
     std::vector<float> waveformMin;
     std::vector<float> waveformMax;
     bool pitched = false;

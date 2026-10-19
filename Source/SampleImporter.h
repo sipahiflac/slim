@@ -1,6 +1,7 @@
 #pragma once
 #include "SoundEngine.h"
 #include "PitchAnalysis.h"
+#include "SoundStore.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <functional>
@@ -14,8 +15,12 @@ public:
     void detectPitch(int index, Done done) {
         PreparedGeneratedSample sample;
         mutate([&](SoundEngine& engine) { sample = engine.copyGeneratedSampleForSaving(index); return juce::var(); });
-        if (!juce::Thread::launch([audio = std::move(sample.processed), done] {
-            const auto pitch = SamplePitch::analyse(audio);
+        // Only the part that is actually played: after trimming, "analyse again" listens to what is left.
+        const auto total = sample.processed.size();
+        const auto from = std::min(total, (size_t) std::llround(juce::jlimit(0.0f, 1.0f, sample.trimStart) * (float) total));
+        const auto to = std::max(from, std::min(total, (size_t) std::llround(juce::jlimit(0.0f, 1.0f, sample.trimEnd) * (float) total)));
+        if (!juce::Thread::launch([audio = std::vector<float>(sample.processed.begin() + (ptrdiff_t) from, sample.processed.begin() + (ptrdiff_t) to), done] {
+            const auto pitch = SamplePitch::analyseSelection(audio);
             auto* result = new juce::DynamicObject();
             result->setProperty("ok", !audio.empty()); result->setProperty("rootNote", pitch.note);
             result->setProperty("rootCents", pitch.cents); result->setProperty("pitched", pitch.pitched);
@@ -25,16 +30,43 @@ public:
     }
     SampleImporter(Mutation edit, std::function<void()> changed) : mutate(std::move(edit)), notify(std::move(changed)) {}
     ~SampleImporter() override {
-        if (draft >= 0) mutate([this](SoundEngine& engine) { auto result = engine.deleteGeneratedSample(draft); engine.selectVoice(previous); result.getDynamicObject()->setProperty("index", previous); return result; });
+        if (draft < 0 || busy) return;
+        // Closing the editor or the app (or the host dropping the plug-in) with an unsaved sound saves it: the work
+        // is never lost just because "Save" was not pressed.
+        PreparedGeneratedSample sample;
+        mutate([&](SoundEngine& engine) { sample = engine.copyGeneratedSampleForSaving(draft); return juce::var(true); });
+        if (writeSampleFiles(sample)) {
+            juce::String settingsPath, settingsJson;
+            mutate([&](SoundEngine& engine) {
+                auto saved = engine.commitImportedSample(draft, sample.processedFile, sample.originalFile);
+                settingsPath = engine.getInstrumentSettingsPath(draft); settingsJson = engine.getInstrumentSettingsJson(draft);
+                return saved;
+            });
+            if (settingsPath.isNotEmpty()) juce::File(settingsPath).replaceWithText(settingsJson);
+            return;
+        }
+        mutate([this](SoundEngine& engine) { auto result = engine.deleteGeneratedSample(draft); engine.selectVoice(previous); result.getDynamicObject()->setProperty("index", previous); return result; });
+    }
+    // Writes the processed and original WAV files of `sample` into Documents/Scrap Brain Audio/2G. False if that failed.
+    static bool writeSampleFiles(PreparedGeneratedSample& sample) {
+        auto directory = SoundStore::folderFor(sample.uploaded);
+        auto name = sample.prompt.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_").trim().replaceCharacter(' ', '_').substring(0, 28);
+        if (name.isEmpty()) name = "Sample";
+        const auto file = directory.getNonexistentChildFile(juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S_") + name, SoundStore::extensionFor(sample.uploaded), false);
+        sample.processedFile = file.getFullPathName();
+        sample.originalFile = file.getSiblingFile(file.getFileNameWithoutExtension() + "_original" + SoundStore::extensionFor(sample.uploaded)).getFullPathName();
+        ToneCard::saveGeneratedSampleFiles(sample, sample.pitched ? sample.rootMidiNote + sample.rootCents / 100.0f : 60.0f);
+        const bool written = file.getSize() > 44 && juce::File(sample.originalFile).getSize() > 44;
+        if (!written) { file.deleteFile(); juce::File(sample.originalFile).deleteFile(); }
+        return written;
     }
     static void removeFiles(const juce::var& result) {
         const auto processed = result["processedFile"].toString(), original = result["originalFile"].toString();
         juce::Thread::launch([processed, original] {
-            const auto root = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("Scrap Brain Audio").getChildFile("2G");
             for (const auto& path : { processed, original }) {
                 if (path.isEmpty()) continue;
                 const juce::File file(path);
-                if (!file.isAChildOf(root.getChildFile("Uploaded")) && !file.isAChildOf(root.getChildFile("Generated"))) continue;
+                if (!SoundStore::isStoreFile(file)) continue;
                 file.deleteFile(); file.getSiblingFile(file.getFileName() + ".2g.json").deleteFile();
             }
         });
@@ -84,13 +116,12 @@ public:
         busy = true;
         juce::Component::SafePointer<SampleImporter> safe(this);
         if (!juce::Thread::launch([safe, sample = std::move(sample), done]() mutable {
-            auto directory = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                .getChildFile("Scrap Brain Audio").getChildFile("2G").getChildFile(sample.uploaded ? "Uploaded" : "Generated");
+            auto directory = SoundStore::folderFor(sample.uploaded);
             auto name = sample.prompt.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_").trim().replaceCharacter(' ', '_').substring(0, 28);
             if (name.isEmpty()) name = "Sample";
-            const auto file = directory.getNonexistentChildFile(juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S_") + name, ".wav", false);
+            const auto file = directory.getNonexistentChildFile(juce::Time::getCurrentTime().formatted("%Y%m%d-%H%M%S_") + name, SoundStore::extensionFor(sample.uploaded), false);
             sample.processedFile = file.getFullPathName();
-            sample.originalFile = file.getSiblingFile(file.getFileNameWithoutExtension() + "_original.wav").getFullPathName();
+            sample.originalFile = file.getSiblingFile(file.getFileNameWithoutExtension() + "_original" + SoundStore::extensionFor(sample.uploaded)).getFullPathName();
             ToneCard::saveGeneratedSampleFiles(sample, sample.pitched ? sample.rootMidiNote + sample.rootCents / 100.0f : 60.0f);
             const bool written = file.getSize() > 44 && juce::File(sample.originalFile).getSize() > 44;
             if (!written) { file.deleteFile(); juce::File(sample.originalFile).deleteFile(); }

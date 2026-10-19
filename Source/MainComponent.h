@@ -16,6 +16,7 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void settleWebView(bool hard = false); // see WebViewSettle.h
+    void focusWebView();                   // keyboard focus into the page without a click
 
     static juce::File getResourcesDirectory();
 

@@ -156,6 +156,7 @@ MainComponent::MainComponent()
         })
         .withNativeFunction("finishImport", [this](const auto& args, auto done) { sampleImporter->finish(!args.isEmpty() && (bool)args[0], std::move(done)); })
         .withNativeFunction("getMasterVolume", [this](const auto&, auto done) { done(soundEngine.getMasterVolume()); })
+        .withNativeFunction("getSpeakerSim", [this](const auto&, auto done) { done(soundEngine.isSpeakerSimulationEnabled()); })
         .withNativeFunction("setMasterVolume", [this](const auto& args, auto done) {
             if (!args.isEmpty()) soundEngine.setMasterVolume((float)args[0]);
             done(soundEngine.getMasterVolume());
@@ -182,6 +183,11 @@ MainComponent::MainComponent()
             auto* size = new juce::DynamicObject();
             size->setProperty("w", getWidth()); size->setProperty("h", getHeight());
             done(juce::var(size));
+        })
+        .withNativeFunction("focusWebView", [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            juce::Component::SafePointer<MainComponent> safe(this);
+            juce::MessageManager::callAsync([safe] { if (safe != nullptr) safe->focusWebView(); });
+            done(true);
         })
         .withNativeFunction("repairWebView", [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
             juce::Component::SafePointer<MainComponent> safe(this);
@@ -333,6 +339,10 @@ MainComponent::MainComponent()
             completion(std::move(result));
         })
         .withEventListener("uiReady", [this](const juce::var&) { openAudioDevice(); })
+        .withEventListener("setMidiOptions", [this](const juce::var& data) {
+            soundEngine.setVelocityTouch(!data.hasProperty("touch") || (bool)data["touch"]);
+            soundEngine.setBendRange(data.hasProperty("bend") ? (float)data["bend"] : 2.0f);
+        })
         .withEventListener("noteOn", [this](const juce::var& data) {
             int note = (int)data["note"];
             float vel = data.hasProperty("velocity") ? (float)data["velocity"] : 0.9f;
@@ -460,6 +470,12 @@ void MainComponent::resized()
         size->setProperty("w", getWidth()); size->setProperty("h", getHeight());
         webView->emitEventIfBrowserIsVisible("viewSize", juce::var(size));
     }
+}
+
+void MainComponent::focusWebView()
+{
+    if (webView != nullptr && !webView->hasKeyboardFocus(true))
+        webView->grabKeyboardFocus();
 }
 
 void MainComponent::settleWebView(bool hard)

@@ -27,6 +27,11 @@ window.addEventListener('keydown', e => {
         if(!e.repeat){freePreview=!freePreview;if(currentState===ScreenState.AI_OPTIONS)genOptionsRow=studioUnlocked()?0:3;render();}
         return;
     }
+    if(demoMode&&e.ctrlKey&&!e.shiftKey&&!e.altKey&&/^[1-5]$/.test(e.key)){ // demo macros 1..5
+        e.preventDefault();e.stopImmediatePropagation();
+        if(!e.repeat)playDemoMacro(Number(e.key)-1);
+        return;
+    }
     if(demoMode&&e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyB'||e.key.toLowerCase()==='b')){
         e.preventDefault();e.stopImmediatePropagation();
         if(!e.repeat)replayDemoBoot();
@@ -984,20 +989,23 @@ setInterval(()=>{
     }).catch(()=>{}).finally(()=>{noteGatePollBusy=false;});
 },100);
 
-const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36};
+const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37};
 // A plug-in always renders through its DAW; only standalone owns an output device.
 const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 
 // Demo recording mode (see the demo section further down).
 let demoMode=false,demoBackground='blue',demoToggleAt=0;
 const BACKLIGHT_TIMES=[5,10,15,30,60,0];
-let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:1,messages:true};
+const BEND_RANGES=[0,1,2,5,12]; // semitones; 0 = ignore the pitch wheel
+let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:1,messages:true,velocityTouch:true,bendRange:2};
 try {
     const saved=JSON.parse(localStorage.getItem('scratel.settings') || '{}');
     if(BACKLIGHT_TIMES.includes(saved.backlightSeconds)) phoneSettings.backlightSeconds=saved.backlightSeconds;
     if(Number.isInteger(saved.keyVolume) && saved.keyVolume>=0 && saved.keyVolume<=10) phoneSettings.keyVolume=saved.keyVolume;
     if([0,1,2].includes(saved.promptStrength))phoneSettings.promptStrength=saved.promptStrength;
     if(typeof saved.messages==='boolean')phoneSettings.messages=saved.messages;
+    if(typeof saved.velocityTouch==='boolean')phoneSettings.velocityTouch=saved.velocityTouch;
+    if(BEND_RANGES.includes(saved.bendRange))phoneSettings.bendRange=saved.bendRange;
 } catch (_) {}
 let backlightOn=true,backlightTimer=null,settingsRow=0,settingsEditing=false,settingsError='';
 let audioOutputs=[],audioOutputName='System default',audioOutputType='',audioOutputRow=0,audioOutputError='';
@@ -1016,13 +1024,19 @@ function adjustPhoneSetting(direction) {
         phoneSettings.backlightSeconds=BACKLIGHT_TIMES[Math.max(0,Math.min(BACKLIGHT_TIMES.length-1,i+direction))];
     } else if(id==='keySound')phoneSettings.keyVolume=Math.max(0,Math.min(10,phoneSettings.keyVolume+direction));
     else if(id==='messages')phoneSettings.messages=!phoneSettings.messages;
+    else if(id==='velocity')phoneSettings.velocityTouch=!phoneSettings.velocityTouch;
+    else if(id==='bend'){const i=BEND_RANGES.indexOf(phoneSettings.bendRange);phoneSettings.bendRange=BEND_RANGES[(i+direction+BEND_RANGES.length)%BEND_RANGES.length];}
     settingsError='';
     try {localStorage.setItem('scratel.settings',JSON.stringify(phoneSettings));}
     catch (_) {settingsError='Not saved';}
     // Turning messages back on delivers anything that came due while they were off.
     if(id==='messages'&&phoneSettings.messages)deliverDueMessages();
+    if(id==='velocity'||id==='bend')syncMidiOptions();
     wakeBacklight();render();
 }
+// The engine owns velocity handling and the pitch wheel; tell it the current Settings (and again once the page is ready).
+function syncMidiOptions(){emitJuce('setMidiOptions',{touch:phoneSettings.velocityTouch,bend:phoneSettings.bendRange});}
+window.addEventListener('phoneReady',syncMidiOptions,{once:true});
 function loadAudioOutputs(openList=false) {
     const fn=window.__JUCE__?.backend?.getNativeFunction?.('getAudioOutputs');
     if(!fn){audioOutputError='Audio unavailable';render();return;}
@@ -1157,6 +1171,9 @@ function stepCategoryVoice(direction) {
 }
 let listScrollTop = 0;
 let editSelectedIndex = 0;
+// Quality row: Enter flips between the processed sound and the untouched original; the word replaces the
+// slider for a moment so the change is visible without another screen.
+let editUseOriginal=false,editSourceFlashUntil=0,editSourceFlashTimer=0;
 let editScrollTop = 1;
 let editValues = [10, 2, 2, 5, 1, 10, 5];
 const EDIT_PARAMETERS = [
@@ -1191,6 +1208,7 @@ const CHAT_QUESTIONS=[
 ];
 const SUPPORT_EMAIL='contact@scrapbrainaudio.com';
 const CHAT_CLOSING="thx for chatting with us! :)\n\nwe're a tiny independent team, and we actually read every reply. your feedback helps us figure out what to do next.\n\ngot more ideas? drop us a mail at {mail}\n\nsee u around! :)";
+// Plain reading messages (no answers) use `paged`: the text scrolls like the closing of the welcome chat.
 const MESSAGE_CATALOG=[
     {id:'welcome-chat-v1',title:'hey! :)',conversation:true,delayMs:10*60*1000},
     {id:'preview-chat',title:'hey! :)',conversation:true,testOnly:true},
@@ -1334,7 +1352,7 @@ function openMessage(id){
     messageOpenId=id;
     if(!messageStore.read.includes(id)){messageStore.read.push(id);saveMessageStore();}
     if(messageDefinition(id).conversation){openMessageChat(!!messageDefinition(id).testOnly);return;}
-    currentState=ScreenState.MESSAGE_DETAIL;render();
+    pagedScroll=0;currentState=ScreenState.MESSAGE_DETAIL;render();
 }
 function openInbox(){
     stopMessageChatTimers();
@@ -1382,7 +1400,7 @@ const aiPromptInput=document.getElementById('ai-prompt-input');
 const licenseCodeInput=document.getElementById('license-code-input');
 let licenseData={status:'unlicensed'},licenseCursorOn=true,licenseRequestSerial=0;
 function phoneSettingIds(){
-    const ids=IS_PLUGIN_HOST?['light','keySound','messages']:['output','light','keySound','messages'];
+    const ids=IS_PLUGIN_HOST?['light','keySound','messages','velocity','bend']:['output','light','keySound','messages','velocity','bend'];
     return licenseData.status==='active'?[...ids,'license']:['license',...ids];
 }
 let licenseChecked=false; // the first answer from the server has arrived
@@ -1592,15 +1610,15 @@ function renderAiLicense(){
 function leaveSoundMaker(){
     currentState=ScreenState.MENU;aiError='';aiPromptInput.blur();render();
 }
-aiPromptInput.addEventListener('blur',()=>setTimeout(()=>{if(currentState===ScreenState.AI_PROMPT)aiPromptInput.focus();},0));
-window.addEventListener('focus',()=>{if(currentState===ScreenState.AI_PROMPT)focusAiPrompt();});
+aiPromptInput.addEventListener('blur',()=>setTimeout(()=>{if(currentState===ScreenState.AI_PROMPT||currentState===ScreenState.DEMO_MACRO)aiPromptInput.focus();},0));
+window.addEventListener('focus',()=>{if(currentState===ScreenState.AI_PROMPT)focusAiPrompt();else if(currentState===ScreenState.DEMO_MACRO)promptField.focus();});
 // ---- renaming a generated or uploaded sound -------------------------------------------------
 const nameInput=document.getElementById('sample-name-input');
 function cleanSampleName(value){return String(value).replace(/[\u0000-\u001f\u007f]+/g,' ').slice(0,28);}
 let renameError='';
 const nameField=new LcdTextField(nameInput,{maxLength:28,multiline:true,normalize:cleanSampleName,onChange:()=>{renameError='';render();}});
 function activeTextField(){
-    return currentState===ScreenState.AI_PROMPT?promptField
+    return currentState===ScreenState.AI_PROMPT||currentState===ScreenState.DEMO_MACRO?promptField
         :currentState===ScreenState.LICENSE_INPUT?licenseField
         :currentState===ScreenState.RENAME_SAMPLE?nameField:null;
 }
@@ -1643,6 +1661,7 @@ function requestDemoToggle(){
     const now=performance.now();
     if(now-demoToggleAt<500)return; // the native shortcut watcher and the page both see the chord
     demoToggleAt=now;
+    if(currentState===ScreenState.DEMO_MACRO)return;
     if(demoMode)exitDemoMode();else openDemoSetup();
 }
 function openDemoSetup(){
@@ -1651,7 +1670,7 @@ function openDemoSetup(){
     currentState=ScreenState.DEMO_SETUP;wakeBacklight();render();
 }
 function cancelDemoSetup(){currentState=demoSetupReturn;render();}
-function startDemoFromSetup(){enterDemoMode(demoSetupRow===1?'wood':'blue');}
+function startDemoFromSetup(){activateDemoSetupRow();}
 function setDemoWindow(on){return window.__JUCE__?.backend?.getNativeFunction?.('setDemoWindow')?.(on);}
 function enterDemoMode(background){
     demoMode=true;demoBackground=background;
@@ -1664,7 +1683,7 @@ function enterDemoMode(background){
     Promise.resolve(setDemoWindow(true)).catch(()=>{}).finally(()=>window.dispatchEvent(new Event('resize')));
 }
 function exitDemoMode(){
-    demoMode=false;++aiRequestSerial;
+    demoMode=false;cancelDemoTyping();++aiRequestSerial;
     document.documentElement.classList.remove('demo-mode','demo-blue','demo-wood');
     aiPromptInput.blur();nameInput.blur();
     currentState=ScreenState.IDLE;wakeBacklight();render();
@@ -1681,8 +1700,56 @@ window.addEventListener('phoneReady',()=>{
     try{background=sessionStorage.getItem('2g.demo-replay');sessionStorage.removeItem('2g.demo-replay');}catch(_){}
     if(background)enterDemoMode(background==='wood'?'wood':'blue');
 },{once:true});
+// Five macro slots: prompts typed ahead of time. In demo mode, Ctrl+1..5 on the Neural Synthesis prompt types the slot
+// into the prompt the way a person would (the website demo's typing), so a recording needs no live typing.
+const DEMO_MACRO_SLOTS=5,DEMO_SETUP_ROWS=2+DEMO_MACRO_SLOTS;
+let demoMacros=Array(DEMO_MACRO_SLOTS).fill('');
+try{const saved=JSON.parse(localStorage.getItem('2g.demo-macros')||'[]');
+    if(Array.isArray(saved))demoMacros=demoMacros.map((_,i)=>typeof saved[i]==='string'?saved[i].slice(0,450):'');}catch(_){}
+const saveDemoMacros=()=>{try{localStorage.setItem('2g.demo-macros',JSON.stringify(demoMacros));}catch(_){}};
+let demoMacroEditing=-1,demoMacroBackup='',demoTyping=false,demoTypingTimer=null;
 function renderDemoSetup(){
-    renderHandsetList('Demo mode',['Blue screen','Wood desk'],demoSetupRow,'Start','Cancel');
+    const rows=['Blue screen','Wood desk',...demoMacros.map((text,i)=>(i+1)+': '+(text||'(empty)'))];
+    renderHandsetList('Demo mode',rows,demoSetupRow,demoSetupRow<2?'Start':'Edit','Cancel');
+}
+function activateDemoSetupRow(){
+    if(demoSetupRow<2)enterDemoMode(demoSetupRow===1?'wood':'blue');
+    else openDemoMacro(demoSetupRow-2);
+}
+function openDemoMacro(slot){
+    demoMacroEditing=slot;demoMacroBackup=aiPromptInput.value;
+    promptField.setValue(demoMacros[slot]);currentState=ScreenState.DEMO_MACRO;render();
+    setTimeout(()=>{if(currentState===ScreenState.DEMO_MACRO)promptField.focus();},0);
+}
+function closeDemoMacro(save){
+    if(save&&demoMacroEditing>=0){demoMacros[demoMacroEditing]=aiPromptInput.value.replace(/\s+/g,' ').trim().slice(0,450);saveDemoMacros();}
+    promptField.setValue(demoMacroBackup);aiPromptInput.blur();
+    currentState=ScreenState.DEMO_SETUP;demoSetupRow=2+Math.max(0,demoMacroEditing);demoMacroEditing=-1;render();
+}
+function renderDemoMacro(){
+    clearScreen();drawListTitle('Macro '+(demoMacroEditing+1));
+    promptField.draw({left:5,top:14,width:82,lines:4,lineHeight:9});
+    drawFieldScrollbar(promptField,91,13,37,4);
+    drawSoftkeys('Save','Back');
+}
+function cancelDemoTyping(){clearTimeout(demoTypingTimer);demoTypingTimer=null;demoTyping=false;}
+function playDemoMacro(slot){
+    if(!demoMode||currentState!==ScreenState.AI_PROMPT)return;
+    const text=demoMacros[slot];if(!text)return;
+    cancelDemoTyping();
+    const steps=window.buildHumanTyping?.(text)||Array.from(text).map(ch=>({type:'key',ch,ms:70}));
+    promptField.setValue('');render();
+    demoTyping=true;let index=0,typed='';
+    const next=()=>{
+        if(!demoTyping||currentState!==ScreenState.AI_PROMPT){cancelDemoTyping();return;}
+        if(index>=steps.length){cancelDemoTyping();promptField.setValue(text);render();return;}
+        const step=steps[index++];
+        if(step.type==='key'){typed+=step.ch;playKeySound('buttondown');setTimeout(()=>playKeySound('buttonup'),45);}
+        else if(step.type==='back'){typed=typed.slice(0,-1);playKeySound('buttondown');}
+        if(step.type!=='pause'){promptField.setValue(typed);render();}
+        demoTypingTimer=setTimeout(next,step.ms);
+    };
+    demoTypingTimer=setTimeout(next,0);
 }
 function demoNormalize(text){return String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();}
 function demoTrigrams(text){
@@ -2120,9 +2187,27 @@ function renderInbox(){
     const ids=inboxIds();messageSelectedIndex=Math.min(messageSelectedIndex,Math.max(0,ids.length-1));
     renderHandsetList('Messages',ids.map(id=>`${messageStore.read.includes(id)?' ':'*'} ${messageDefinition(id).title}`),messageSelectedIndex,'Read','Back','No messages');
 }
+let pagedScroll=0;
+const pagedLines=item=>String(item.body).split('\n').flatMap(paragraph=>paragraph.trim()?wrapBitmapText(paragraph,84,99,FONTS.Regular):['']);
+function scrollPaged(direction){
+    const item=messageDefinition(messageOpenId);if(!item?.paged)return;
+    pagedScroll=Math.max(0,Math.min(Math.max(0,pagedLines(item).length-CHAT_VISIBLE_LINES),pagedScroll+direction));render();
+}
+function advancePaged(){
+    const item=messageDefinition(messageOpenId);if(!item?.paged)return;
+    const end=Math.max(0,pagedLines(item).length-CHAT_VISIBLE_LINES);
+    if(pagedScroll>=end)openInbox();else{pagedScroll=Math.min(end,pagedScroll+CHAT_VISIBLE_LINES);render();}
+}
 function renderMessageDetail(){
     const item=messageDefinition(messageOpenId);if(!item){openInbox();return;}
     clearScreen();drawListTitle(fitText(item.title,86,FONTS.Regular));
+    if(item.paged){
+        const lines=pagedLines(item),end=Math.max(0,lines.length-CHAT_VISIBLE_LINES);
+        lines.slice(pagedScroll,pagedScroll+CHAT_VISIBLE_LINES).forEach((line,i)=>drawString(CHAT_TEXT_X,CHAT_TEXT_Y+i*CHAT_LINE_HEIGHT,line,FONTS.Regular,1));
+        if(end)drawLcdSlider(93,CHAT_TEXT_Y,50,pagedScroll/end);
+        addLcdTarget(4,11,86,24,()=>scrollPaged(-1));addLcdTarget(4,35,86,26,()=>scrollPaged(1));
+        drawSoftkeys(pagedScroll<end?'More':'Inbox','Back');return;
+    }
     wrapBitmapText(item.body,86,4,FONTS.Regular).forEach((line,i)=>drawString(5,15+i*9,line,FONTS.Regular,1));
     const answer=messageStore.responses[item.id];
     if(answer)drawString(5,53,fitTextWithEllipsis('Saved: '+item.options[answer.choice],87,FONTS.Regular),FONTS.Regular,1);
@@ -2358,7 +2443,9 @@ function renderPhoneSettings() {
     const ids=phoneSettingIds(),selected=ids[settingsRow];
     const labels={license:'License',output:formatSettingsOutput(audioOutputName),
         light:'Light: '+light,keySound:'Key sound: '+phoneSettings.keyVolume+'/10',
-        messages:'Messages: '+(phoneSettings.messages?'On':'Off')};
+        messages:'Messages: '+(phoneSettings.messages?'On':'Off'),
+        velocity:'Velocity: '+(phoneSettings.velocityTouch?'Touch':'Fixed'),
+        bend:'Pitch bend: '+(phoneSettings.bendRange?'+-'+phoneSettings.bendRange:'Off')};
     const rows=ids.map(id=>labels[id]);
     const left=['output','license'].includes(selected)?'Select':settingsEditing?'Done':'Change';
     renderHandsetList('Settings',rows,settingsRow,left);
@@ -2765,7 +2852,7 @@ function renderEditWaveform() {
         ctx.fillRect(lx,27,Math.max(1,rx-lx+1),1);
         ctx.fillRect(lx,24,1,4);ctx.fillRect(rx,24,1,4);
     }
-    if(editSelectedIndex===0) {
+    if(currentState===ScreenState.ROOT_TUNE?tuneField>=3:editSelectedIndex===0) {
         const markerX=editMarker==='start'?sx:ex;
         ctx.fillStyle=getColor(2);
         ctx.fillRect(markerX-2,editMarker==='start'?0:29,5,1);
@@ -2789,7 +2876,10 @@ function renderEditVoiceScreen() {
         else if(item.kind==='loop')value=editLoopName();
         else if(item.kind==='parameter') {
             const parameterValue=editValues[item.parameter];
-            drawLcdSlider(38,y+2,31,(parameterValue-1)/(item.maximum-1),false,selected?0:2,selected?1:0);
+            if(item.parameter===5&&performance.now()<editSourceFlashUntil){
+                const word=editUseOriginal?'Original':'Processed';
+                drawString(38+Math.floor((31-measureString(word,FONTS.Regular))/2),y,word,FONTS.Regular,ink);
+            }else drawLcdSlider(38,y+2,31,(parameterValue-1)/(item.maximum-1),false,selected?0:2,selected?1:0);
             const rounded=Math.round(parameterValue*10)/10;
             value=item.parameter===2&&rounded>=10?'Full':(Number.isInteger(rounded)?String(rounded):rounded.toFixed(1));
         }
@@ -2805,17 +2895,28 @@ function renderEditVoiceScreen() {
     }
     const selectedItem=editSelectedIndex>0?editorRow(editSelectedIndex):null;
     const left=editSelectedIndex===0?(editMarker==='start'?'Start':'Stop')
-        :selectedItem?.kind==='tune'?'Open':selectedItem?.kind==='loop'?'Change':selectedItem?.kind==='rename'?'Rename':selectedItem?.kind==='delete'?'Delete':'';
+        :selectedItem?.kind==='parameter'&&selectedItem.parameter===5?'Source':selectedItem?.kind==='tune'?'Open':selectedItem?.kind==='loop'?'Change':selectedItem?.kind==='rename'?'Rename':selectedItem?.kind==='delete'?'Delete':'';
     drawSoftkeys(left,'Back');
 }
 
 function renderDeleteSample() {
     clearScreen();drawListTitle('Delete sample');
-    drawStringCentered(20,'Delete WAV files?',FONTS.Regular,1);
+    drawStringCentered(20,'Delete this sound?',FONTS.Regular,1);
     drawStringCentered(34,fitText(instrumentList[selectedVoiceIndex]||'',84,FONTS.Regular),FONTS.Regular,1);
     drawSoftkeys('Delete','Back');
 }
 
+function toggleEditSource() {
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('setGeneratedSampleControls');
+    if(!fn)return;
+    const next=!editUseOriginal;
+    fn(selectedVoiceIndex,editRootNote,editPitched,next).then(raw=>{
+        if(!unwrapNativeResult(raw).ok)return;
+        editUseOriginal=next;editSourceFlashUntil=performance.now()+1600;
+        clearTimeout(editSourceFlashTimer);editSourceFlashTimer=setTimeout(render,1650);
+        emitJuce('previewVoice',{index:selectedVoiceIndex});render();
+    }).catch(()=>{});
+}
 function setLoopSelection(selection) {
     const fn=window.__JUCE__?.backend?.getNativeFunction?.('setInstrumentLoop');
     if(!fn)return;
@@ -2923,7 +3024,7 @@ function loadEditValues() {
         editSampleStart=Math.max(0,Math.min(.98,Number(data.start)||0));
         editSampleEnd=Math.max(editSampleStart+.02,Math.min(1,Number(data.end)||1));
         editRootNote=Math.max(0,Math.min(127,Math.round(Number.isFinite(Number(data.rootNote))?Number(data.rootNote):60)));
-        editRootCents=Number(data.rootCents)||0;editPitched=!!data.pitched;
+        editRootCents=Number(data.rootCents)||0;editPitched=!!data.pitched;editUseOriginal=!!data.useOriginal;
         editLoopRegions=Array.isArray(data.loops)?data.loops.map(loop=>({
             start:Math.max(0,Math.min(1,Number(loop.start)||0)),
             end:Math.max(0,Math.min(1,Number(loop.end)||0))
@@ -2993,8 +3094,8 @@ lcdPointerSurface.addEventListener('pointerdown',event=>{
         textField.focus();
         return;
     }
-    if(currentState!==ScreenState.EDIT_VOICE)return;
-    if(logicalY>=LCD_LAYOUT.editorRowsTop&&logicalY<LCD_LAYOUT.editorRowsTop+3*LCD_LAYOUT.editorRowHeight) {
+    if(currentState!==ScreenState.EDIT_VOICE&&currentState!==ScreenState.ROOT_TUNE)return;
+    if(currentState===ScreenState.EDIT_VOICE&&logicalY>=LCD_LAYOUT.editorRowsTop&&logicalY<LCD_LAYOUT.editorRowsTop+3*LCD_LAYOUT.editorRowHeight) {
         const visibleRow=Math.floor((logicalY-LCD_LAYOUT.editorRowsTop)/LCD_LAYOUT.editorRowHeight);
         const rowIndex=editScrollTop+visibleRow;
         if(rowIndex<editRowCount()){editSelectedIndex=rowIndex;render();}
@@ -3003,7 +3104,8 @@ lcdPointerSurface.addEventListener('pointerdown',event=>{
     if(logicalY<LCD_LAYOUT.waveOffset||logicalY>=LCD_LAYOUT.waveOffset+30)return;
     const value=editWavePosition(event);
     editMarker=Math.abs(value-editSampleStart)<=Math.abs(value-editSampleEnd)?'start':'end';
-    editSelectedIndex=0;editWaveDragging=true;lcdPointerSurface.setPointerCapture(event.pointerId);
+    if(currentState===ScreenState.ROOT_TUNE)tuneField=editMarker==='start'?3:4;else editSelectedIndex=0;
+    editWaveDragging=true;lcdPointerSurface.setPointerCapture(event.pointerId);
     dragEditWave(event);event.preventDefault();
 });
 lcdPointerSurface.addEventListener('pointermove',event=>{
@@ -3092,6 +3194,7 @@ function renderScreenContent(){
     else if (currentState === ScreenState.AI_PROMPT) renderAiPrompt();
     else if (currentState === ScreenState.RENAME_SAMPLE) renderRenameSample();
     else if (currentState === ScreenState.DEMO_SETUP) renderDemoSetup();
+    else if (currentState === ScreenState.DEMO_MACRO) renderDemoMacro();
     else if (currentState === ScreenState.AI_LICENSE) renderAiLicense();
     else if (currentState === ScreenState.AI_OPTIONS) renderAiOptions();
     else if (currentState === ScreenState.AI_GENERATING) renderAiGenerating();
@@ -3285,6 +3388,7 @@ window.addEventListener('keydown', (e) => {
         e.preventDefault();return;
     }
     if(currentState===ScreenState.AI_PROMPT) {
+        if(demoTyping){if(e.key==='Escape')cancelDemoTyping();e.preventDefault();return;} // a macro is typing
         if(e.key==='Tab'){openAiOptions();e.preventDefault();return;}
         if((e.key==='Backspace'||e.key==='Delete') && !aiPromptInput.value.length){leaveSoundMaker();e.preventDefault();return;}
         if(e.key==='Enter') {generateAiSample();e.preventDefault();}
@@ -3308,8 +3412,16 @@ window.addEventListener('keydown', (e) => {
     if(currentState===ScreenState.DEMO_SETUP) {
         if(e.key==='Enter'||e.key===' '){startDemoFromSetup();}
         else if(e.key==='Escape'||e.key==='Backspace'){cancelDemoSetup();}
-        else if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){demoSetupRow=(demoSetupRow+1)%2;render();}
+        else if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)){
+            demoSetupRow=(demoSetupRow+(e.key==='ArrowUp'||e.key==='ArrowLeft'?-1:1)+DEMO_SETUP_ROWS)%DEMO_SETUP_ROWS;render();
+        }
         e.preventDefault();return;
+    }
+    if(currentState===ScreenState.DEMO_MACRO) {
+        if(e.key==='Enter'){closeDemoMacro(true);e.preventDefault();}
+        else if(e.key==='Escape'){closeDemoMacro(false);e.preventDefault();}
+        else{if(promptField.handleKey(e,80,4))e.preventDefault();setTimeout(render,0);}
+        return;
     }
     if(currentState===ScreenState.DELETE_SAMPLE) {
         if(e.key==='Enter'){deleteSelectedGenerated();e.preventDefault();return;}
@@ -3344,7 +3456,12 @@ window.addEventListener('keydown', (e) => {
             else if(select&&ids.length)openMessage(ids[messageSelectedIndex]);
             else if((e.key==='ArrowUp'||e.key==='ArrowDown')&&ids.length){messageSelectedIndex=(messageSelectedIndex+(e.key==='ArrowUp'?-1:1)+ids.length)%ids.length;render();}
         }else if(currentState===ScreenState.MESSAGE_DETAIL){
-            if(back)openInbox();
+            if(messageDefinition(messageOpenId)?.paged){
+                if(back)openInbox();
+                else if(select)advancePaged();
+                else if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key))scrollPaged(['ArrowUp','ArrowLeft'].includes(e.key)?-1:1);
+            }
+            else if(back)openInbox();
             else if(select){messageChoiceIndex=messageStore.responses[messageOpenId]?.choice??0;currentState=ScreenState.MESSAGE_CHOICES;render();}
         }else if(currentState===ScreenState.MESSAGE_CHOICES){
             const count=Math.min(4,messageDefinition(messageOpenId)?.options.length??0);
@@ -3379,13 +3496,13 @@ window.addEventListener('keydown', (e) => {
     }
     if(currentState===ScreenState.SETTINGS) {
         const ids=phoneSettingIds(),id=ids[settingsRow],rowCount=ids.length;
-        const editable=['light','keySound','messages'].includes(id);
+        const editable=['light','keySound','messages','velocity','bend'].includes(id);
         if(e.key==='Escape' || e.key==='Backspace') {
             if(settingsEditing)settingsEditing=false;else currentState=ScreenState.MENU;
         } else if(e.key==='Enter' || e.key===' ') {
             if(id==='output'){settingsEditing=false;loadAudioOutputs(true);}
             else if(id==='license'){settingsEditing=false;checkLicenseStatus();}
-            else if(id==='messages')adjustPhoneSetting(1);
+            else if(id==='messages'||id==='velocity'||id==='bend')adjustPhoneSetting(1);
             else settingsEditing=!settingsEditing;
         }
         else if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&editable)adjustPhoneSetting(e.key==='ArrowLeft'?-1:1);
@@ -3444,6 +3561,7 @@ window.addEventListener('keydown', (e) => {
     // 'B' key: Toggle speaker emulation layer for A/B comparison
     if (k === 'b' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         emitJuce('toggleSpeaker', {});
+        refreshSpeakerBypass(120);
         e.preventDefault();
         return;
     }
@@ -3498,6 +3616,7 @@ window.addEventListener('keydown', (e) => {
             const item=editSelectedIndex>0?editorRow(editSelectedIndex):null;
             if(editSelectedIndex===0){editMarker=editMarker==='start'?'end':'start';render();}
             else if(item?.kind==='loop')cycleLoopSelection(1);
+            else if(item?.kind==='parameter'&&item.parameter===5)toggleEditSource();
             else if(item?.kind==='tune'){tuneField=0;tuneError='';currentState=ScreenState.ROOT_TUNE;render();}
             else if(item?.kind==='rename')openRename();
             else if(item?.kind==='delete') {
@@ -3839,13 +3958,15 @@ window.addEventListener('drop',e=>{e.preventDefault();document.getElementById('s
 setInterval(()=>{if(currentState===ScreenState.IMPORT_LOADING&&importBusy&&!document.hidden)render();},180);
 
 function renderRootTune(){
+    if(tuneField>=3)editMarker=tuneField===3?'start':'end';
     clearScreen();renderEditWaveform();
     const fine=(editRootCents>=0?'+':'')+Math.round(editRootCents)+'c';
-    const label=tuneBusy?'Analysing...':tuneError|| (tuneField===0?'Root '+editRootName():tuneField===1?'Fine '+fine:editPitched?'Pitched: On':'Unpitched');
+    const percent=value=>Math.round(value*100)+'%';
+    const label=tuneBusy?'Analysing...':tuneError|| (tuneField===0?'Root '+editRootName():tuneField===1?'Fine '+fine:tuneField===2?(editPitched?'Pitched: On':'Unpitched'):tuneField===3?'Start '+percent(editSampleStart):'Stop '+percent(editSampleEnd));
     const pianoX=12,pianoY=45,keyWidth=10,pianoWidth=71,pianoHeight=15,labelY=35;
     drawString(pianoX,labelY,fitText(label,pianoWidth,FONTS.Regular),FONTS.Regular,1);
     if(tuneField===0&&!tuneBusy&&!tuneError)drawString(pianoX+pianoWidth-measureString(fine,FONTS.Regular),labelY,fine,FONTS.Regular,1);
-    addLcdTarget(pianoX,labelY-1,46,10,()=>{if(!tuneBusy){tuneField=(tuneField+1)%3;render();}});
+    addLcdTarget(pianoX,labelY-1,46,10,()=>{if(!tuneBusy){tuneField=(tuneField+1)%5;render();}});
     addLcdTarget(60,labelY-1,23,10,()=>{if(!tuneBusy){tuneField=1;render();}});
     const octave=Math.floor(editRootNote/12)*12,whites=[0,2,4,5,7,9,11],blacks=[1,3,6,8,10];
     const setNote=note=>{if(tuneBusy)return;editRootNote=Math.max(0,Math.min(127,note));editPitched=true;tuneField=0;commitEditorControls();render();};
@@ -3862,7 +3983,8 @@ function renderRootTune(){
 async function detectEditorRoot(){
     if(tuneBusy)return;const fn=window.__JUCE__?.backend?.getNativeFunction?.('detectRootNote');if(!fn)return;
     const index=selectedVoiceIndex;tuneBusy=true;tuneStarted=Date.now();tuneError='';render();
-    try{const data=unwrapNativeResult(await fn(index));if(!data.ok)throw Error('Analysis failed');if(index!==selectedVoiceIndex)return;editRootNote=Number(data.rootNote);editRootCents=Number(data.rootCents)||0;editPitched=!!data.pitched;tuneField=editPitched?0:2;commitEditorControls();await new Promise(resolve=>setTimeout(resolve,Math.max(0,375-(Date.now()-tuneStarted))));}
+    try{await flushEditorControls().catch(()=>{}); // the trim just set must reach the engine before it analyses
+        const data=unwrapNativeResult(await fn(index));if(!data.ok)throw Error('Analysis failed');if(index!==selectedVoiceIndex)return;editRootNote=Number(data.rootNote);editRootCents=Number(data.rootCents)||0;editPitched=!!data.pitched;tuneField=editPitched?0:2;commitEditorControls();await new Promise(resolve=>setTimeout(resolve,Math.max(0,375-(Date.now()-tuneStarted))));}
     catch(error){tuneError=error.message;}finally{tuneBusy=false;render();}
 }
 window.addEventListener('keydown',e=>{
@@ -3871,8 +3993,9 @@ window.addEventListener('keydown',e=>{
     if(e.key==='Escape'||e.key==='Backspace'){currentState=ScreenState.EDIT_VOICE;render();return;}
     if(tuneBusy)return;
     if(e.key==='Enter'||e.key===' '){detectEditorRoot();return;}
-    if(e.key==='ArrowUp'||e.key==='ArrowDown')tuneField=(tuneField+(e.key==='ArrowUp'?-1:1)+3)%3;
-    else{const direction=e.key==='ArrowLeft'?-1:1;if(tuneField===0)stepTune(direction);else if(tuneField===1){editRootCents=Math.max(-100,Math.min(100,editRootCents+direction));editPitched=true;commitEditorControls();}else{editPitched=!editPitched;commitEditorControls();}}
+    if(e.key==='ArrowUp'||e.key==='ArrowDown')tuneField=(tuneField+(e.key==='ArrowUp'?-1:1)+5)%5;
+    else{const direction=e.key==='ArrowLeft'?-1:1;if(tuneField>=3){editMarker=tuneField===3?'start':'end';moveEditMarker(direction,e.shiftKey);return;}
+        if(tuneField===0)stepTune(direction);else if(tuneField===1){editRootCents=Math.max(-100,Math.min(100,editRootCents+direction));editPitched=true;commitEditorControls();}else{editPitched=!editPitched;commitEditorControls();}}
     render();
 },true);
 document.getElementById('screen-frame').addEventListener('wheel',e=>{if(currentState!==ScreenState.ROOT_TUNE||e.ctrlKey||!e.deltaY)return;e.preventDefault();e.stopImmediatePropagation();pressNavigationKey(e.deltaY>0?'ArrowRight':'ArrowLeft');},{capture:true,passive:false});
@@ -3914,4 +4037,23 @@ async function finishStartup(){
         render();await boot.finish();
     }catch(error){console.warn('Startup:',error);boot.fail();}
 }
+// The speaker model is on at start; the engine owns the real state, so ask it (after a B press, and once at start).
+function refreshSpeakerBypass(delay=0){
+    setTimeout(()=>{
+        const fn=window.__JUCE__?.backend?.getNativeFunction?.('getSpeakerSim');
+        fn?.().then(raw=>{let on=raw;while(Array.isArray(on))on=on[0];window.setSpeakerBypassed?.(on===false||on===0);}).catch(()=>{});
+    },delay);
+}
+window.addEventListener('phoneReady',()=>refreshSpeakerBypass(0),{once:true});
+// Keyboard without clicking first: the page asks the native side to give it keyboard focus when the pointer enters
+// it, when the window is activated and once it is ready. (The standalone also does this on window activation.)
+(()=>{
+    const focusNative=window.__JUCE__?.backend?.getNativeFunction?.('focusWebView');
+    if(!focusNative)return;
+    let last=0;
+    const request=()=>{const now=performance.now();if(now-last<400)return;last=now;try{focusNative()?.catch?.(()=>{});}catch(_){}};
+    document.documentElement.addEventListener('pointerenter',request);
+    window.addEventListener('focus',request);
+    window.addEventListener('phoneReady',request,{once:true});
+})();
 finishStartup();

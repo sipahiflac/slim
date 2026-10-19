@@ -155,6 +155,13 @@ public:
         return speakerSimEnabled.load(std::memory_order_relaxed);
     }
 
+    // MIDI options (Settings). Velocity: follow the keyboard (Touch) or play every note at the same level (Fixed).
+    // Pitch wheel: range in semitones, 0 ignores the wheel.
+    void setVelocityTouch(bool touch) noexcept { velocityTouch.store(touch, std::memory_order_relaxed); }
+    void setBendRange(float semitones) noexcept { bendRange.store(std::clamp(semitones, 0.0f, 12.0f), std::memory_order_relaxed); }
+    void setPitchWheel(int value14bit) noexcept { wheel.store(std::clamp((value14bit - 8192) / 8192.0f, -1.0f, 1.0f), std::memory_order_relaxed); }
+    float getPitchBendSemitones() const noexcept { return wheel.load(std::memory_order_relaxed) * bendRange.load(std::memory_order_relaxed); }
+
     // Movement Layer A/B Comparison Toggle (Pitch and brightness drift)
     void toggleMovement() noexcept
     {
@@ -283,6 +290,8 @@ private:
     // A/B Comparison Bypass Toggle
     std::atomic<bool> speakerSimEnabled{ true };
     std::atomic<bool> movementEnabled{ false };
+    std::atomic<bool> velocityTouch{ true };
+    std::atomic<float> bendRange{ 2.0f }, wheel{ 0.0f };
 
     void initSpeakerFilters();
     void resetSpeakerChain() noexcept;

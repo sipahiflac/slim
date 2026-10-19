@@ -1,4 +1,5 @@
 #include "ToneCard.h"
+#include "SoundStore.h"
 #include "PitchAnalysis.h"
 #include "LoopFinder.h"
 #include "ParallelFor.h"
@@ -216,13 +217,12 @@ PreparedGeneratedSample ToneCard::prepareGeneratedSample(const juce::MemoryBlock
 
     if (!saveFiles) return result;
 
-    auto generatedDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-        .getChildFile("Scrap Brain Audio").getChildFile("2G").getChildFile("Generated");
+    auto generatedDir = SoundStore::generatedFolder();
     auto safeName = result.prompt.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -_").trim().replaceCharacter(' ', '_').substring(0, 28);
     if (safeName.isEmpty()) safeName = "AI_sample";
     const auto stem = created.formatted("%Y%m%d-%H%M%S_") + safeName;
-    const auto processedFile = generatedDir.getNonexistentChildFile(stem, ".wav", false);
-    const auto originalFile = processedFile.getSiblingFile(processedFile.getFileNameWithoutExtension() + "_original.wav");
+    const auto processedFile = generatedDir.getNonexistentChildFile(stem, SoundStore::extensionFor(false), false);
+    const auto originalFile = processedFile.getSiblingFile(processedFile.getFileNameWithoutExtension() + "_original" + SoundStore::extensionFor(false));
     result.processedFile = processedFile.getFullPathName();
     result.originalFile = originalFile.getFullPathName();
     const float exactRoot = result.pitched ? result.rootMidiNote + result.rootCents / 100.0f : 60.0f;
@@ -270,7 +270,7 @@ void ToneCard::analyseGeneratedPlayback(PreparedGeneratedSample& sample)
 void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, bool uploaded)
 {
     if (!folder.isDirectory()) return;
-    auto files = folder.findChildFiles(juce::File::findFiles, false, "*.wav");
+    auto files = folder.findChildFiles(juce::File::findFiles, false, uploaded ? "*.wav" : "*.2gs");
     files.removeIf([](const juce::File& file)
                    { return file.getFileNameWithoutExtension().endsWithIgnoreCase("_original"); });
 
@@ -281,16 +281,16 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         const auto& file = files.getReference(index);
         juce::AudioFormatManager formats;
         formats.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(file));
+        auto reader = SoundStore::openReader(formats, file);
         if (reader == nullptr) return;
 
         PreparedGeneratedSample prepared;
         prepared.processed = resampleReaderToEngineRate(reader.get());
         if (prepared.processed.empty()) return;
-        const auto originalFile = file.getSiblingFile(file.getFileNameWithoutExtension() + "_original.wav");
+        const auto originalFile = file.getSiblingFile(file.getFileNameWithoutExtension() + "_original" + file.getFileExtension());
         if (originalFile.existsAsFile())
         {
-            std::unique_ptr<juce::AudioFormatReader> originalReader(formats.createReaderFor(originalFile));
+            auto originalReader = SoundStore::openReader(formats, originalFile);
             prepared.original = resampleReaderToEngineRate(originalReader.get());
         }
         if (prepared.original.empty()) prepared.original = prepared.processed;

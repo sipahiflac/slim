@@ -25,6 +25,9 @@ public:
     // Render one sample at kEngineSampleRateF. Returns mono sample in [-1.0, 1.0].
     float renderSample(bool movementEnabled = true);
 
+    // Pitch wheel position in semitones (already scaled by the bend range); glides to the new value.
+    void setPitchBend(float semitones) noexcept { bendTarget = semitones; }
+
     bool isActive() const { return active; }
     bool isMenuPreview() const { return menuPreview; }
     void setMenuPreview(bool shouldBePreview) { menuPreview = shouldBePreview; }
@@ -85,6 +88,8 @@ private:
     double tickPos = 0.0;
     double bodyPos = 0.0;
     double pitchRatio = 1.0;
+    float bendTarget = 0.0f, bendSmoothed = 0.0f;
+    double bendRatio = 1.0;
 
     // Movement Layer State (per-voice independent, non-periodic smooth noise)
     uint32_t prngState = 123456789;

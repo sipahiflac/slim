@@ -103,6 +103,8 @@ void Voice::noteOn(int midiNote, float velocity, const Instrument* instrument, c
     if (instrument != nullptr && instrument->liveBaseNote != nullptr)
         baseNote = instrument->liveBaseNote->load(std::memory_order_relaxed);
     pitchRatio = std::pow(2.0, (midiNote - baseNote) / 12.0) * detuneRatio;
+    bendSmoothed = bendTarget;
+    bendRatio = std::abs(bendTarget) < 0.0005f ? 1.0 : std::pow(2.0, (double) bendTarget / 12.0);
 
     const float normalStart = instrument != nullptr && instrument->playbackStart != nullptr
         ? std::clamp(instrument->playbackStart->load(std::memory_order_relaxed), 0.0f, 0.99f)
@@ -212,9 +214,12 @@ float Voice::renderSample(bool movementEnabled)
         cutoffG = std::tan(3.14159265358979323846f * std::exp(smoothedCutoffLog) / kEngineSampleRateF);
     smoothedFilterMix += kParamSmoothAlpha * (targetFilterMix - smoothedFilterMix);
     smoothedVolume += kParamSmoothAlpha * (targetVolume - smoothedVolume);
+    bendSmoothed += kParamSmoothAlpha * (bendTarget - bendSmoothed);
+    if ((age & 15u) == 0u)
+        bendRatio = std::abs(bendSmoothed) < 0.0005f ? 1.0 : std::pow(2.0, (double) bendSmoothed / 12.0);
 
     // 3. Movement Layer: Pitch & Brightness smooth irregular drift (0.5 - 3 Hz)
-    double effectivePitchRatio = pitchRatio;
+    double effectivePitchRatio = pitchRatio * bendRatio;
     float effectiveCutoffG = cutoffG;
 
     if (movementEnabled)
@@ -235,7 +240,7 @@ float Voice::renderSample(bool movementEnabled)
         // Ratio factor = 2^(cents / 1200) ≈ 1.0 + (cents * ln(2) / 1200)
         double centsOffset = (double)(pitchDriftVal * pitchDriftDepthCents);
         double pitchModFactor = std::pow(2.0, centsOffset / 1200.0);
-        effectivePitchRatio = pitchRatio * pitchModFactor;
+        effectivePitchRatio = pitchRatio * pitchModFactor * bendRatio;
 
         // Brightness drift noise (independent random source), same Hz-rate
         // scaling as the pitch drift above.

@@ -163,6 +163,7 @@ public:
             })
             .withNativeFunction("finishImport", [this](const auto& args, auto done) { sampleImporter->finish(!args.isEmpty() && (bool)args[0], std::move(done)); })
             .withNativeFunction("getMasterVolume", [this](const auto&, auto done) { done(processor.getEngine().getMasterVolume()); })
+            .withNativeFunction("getSpeakerSim", [this](const auto&, auto done) { done(processor.getEngine().isSpeakerSimulationEnabled()); })
             .withNativeFunction("setMasterVolume", [this](const auto& args, auto done) {
                 if (!args.isEmpty()) processor.getEngine().setMasterVolume((float)args[0]);
                 done(processor.getEngine().getMasterVolume());
@@ -183,6 +184,11 @@ public:
                 auto* size = new juce::DynamicObject();
                 size->setProperty("w", getWidth()); size->setProperty("h", getHeight());
                 done(juce::var(size));
+            })
+            .withNativeFunction("focusWebView", [this](const auto&, auto done) {
+                juce::Component::SafePointer<Melodragon2GEditor> safe(this);
+                juce::MessageManager::callAsync([safe] { if (safe != nullptr) safe->focusWebView(); });
+                done(true);
             })
             .withNativeFunction("repairWebView", [this](const auto&, auto done) {
                 juce::Component::SafePointer<Melodragon2GEditor> safe(this);
@@ -305,6 +311,10 @@ public:
                                     args.size() > 1 ? (int)args[1] : 1,
                                     args.size() > 2 ? args[2] : juce::var(), std::move(done));
             })
+            .withEventListener("setMidiOptions", [this](const juce::var& data) {
+                processor.getEngine().setVelocityTouch(!data.hasProperty("touch") || (bool) data["touch"]);
+                processor.getEngine().setBendRange(data.hasProperty("bend") ? (float) data["bend"] : 2.0f);
+            })
             .withEventListener("noteOn", [this](const juce::var& data) { processor.getEngine().noteOn((int) data["note"], data.hasProperty("velocity") ? (float) data["velocity"] : 0.9f); })
             .withEventListener("noteOff", [this](const juce::var& data) { processor.getEngine().noteOff((int) data["note"]); })
             .withEventListener("allNotesOff", [this](const juce::var&) { processor.getEngine().allNotesOff(); })
@@ -341,6 +351,16 @@ public:
         auto* size = new juce::DynamicObject();
         size->setProperty("w", getWidth()); size->setProperty("h", getHeight());
         webView->emitEventIfBrowserIsVisible("viewSize", juce::var(size));
+    }
+    void focusWebView()
+    {
+        if (webView != nullptr && !webView->hasKeyboardFocus(true)) webView->grabKeyboardFocus();
+    }
+    // A freshly opened editor takes the keyboard right away.
+    void parentHierarchyChanged() override
+    {
+        juce::Component::SafePointer<Melodragon2GEditor> safe(this);
+        juce::MessageManager::callAsync([safe] { if (safe != nullptr && safe->isShowing()) safe->focusWebView(); });
     }
     void settleWebView(bool hard = false)
     {
@@ -425,7 +445,7 @@ bool Melodragon2GProcessor::isBusesLayoutSupported(const BusesLayout& layouts) c
 void Melodragon2GProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
-    for (const auto item : midi) { const auto m = item.getMessage(); if (m.isNoteOn()) engine.noteOn(m.getNoteNumber(), m.getFloatVelocity()); else if (m.isNoteOff()) engine.noteOff(m.getNoteNumber()); else if (m.isAllNotesOff() || m.isAllSoundOff()) engine.allNotesOff(); else if (m.isProgramChange()) selectSound(m.getProgramChangeNumber()); }
+    for (const auto item : midi) { const auto m = item.getMessage(); if (m.isNoteOn()) engine.noteOn(m.getNoteNumber(), m.getFloatVelocity()); else if (m.isNoteOff()) engine.noteOff(m.getNoteNumber()); else if (m.isAllNotesOff() || m.isAllSoundOff()) engine.allNotesOff(); else if (m.isPitchWheel()) engine.setPitchWheel(m.getPitchWheelValue()); else if (m.isProgramChange()) selectSound(m.getProgramChangeNumber()); }
     buffer.clear(); engine.renderAudioBlock(buffer.getArrayOfWritePointers(), buffer.getNumChannels(), buffer.getNumSamples());
 }
 juce::AudioProcessorEditor* Melodragon2GProcessor::createEditor() { return new Melodragon2GEditor(*this); }

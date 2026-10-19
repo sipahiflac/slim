@@ -1,4 +1,5 @@
 #include "SoundEngine.h"
+#include "SoundStore.h"
 #include "ParallelFor.h"
 #include <cmath>
 #include <algorithm>
@@ -142,9 +143,12 @@ float SoundEngine::renderEngineSample()
 
     // Mix 4 voices into mono with movement layer status
     const bool movEnabled = movementEnabled.load(std::memory_order_relaxed);
+    const float bend = getPitchBendSemitones();
     float rawMono = 0.0f;
     for (size_t i = 0; i < voices.size(); ++i)
     {
+        voices[i].setPitchBend(bend);
+        stealTails[i].setPitchBend(bend);
         const float fresh = voices[i].renderSample(movEnabled);
         int& remaining = stealFadeRemaining[i];
         if (remaining > 0)
@@ -259,15 +263,13 @@ void SoundEngine::calibratePrepared(PreparedGeneratedSample& prepared)
 
 ToneCard SoundEngine::buildDefaultToneCard()
 {
-    auto docs = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    SoundStore::migrateLegacyGenerated(); // older installs: Documents/.../Generated/*.wav -> hidden .2gs
     ToneCard toneCard;
     toneCard.cardName = "User sounds";
     toneCard.categories.add("Generated");
     toneCard.categories.add("Uploaded");
-    ToneCard::appendGeneratedSamples(toneCard,
-        docs.getChildFile("Scrap Brain Audio").getChildFile("2G").getChildFile("Generated"));
-    ToneCard::appendGeneratedSamples(toneCard,
-        docs.getChildFile("Scrap Brain Audio").getChildFile("2G").getChildFile("Uploaded"), true);
+    ToneCard::appendGeneratedSamples(toneCard, SoundStore::generatedFolder());
+    ToneCard::appendGeneratedSamples(toneCard, SoundStore::uploadedFolder(), true);
     // Fixed, conservative load-time trim. Measure the LINEAR speaker path:
     // saturated peaks cannot predict safe gain before that saturation.
     // Check a two-octave range and short transients as well as sustained energy.
@@ -380,6 +382,8 @@ juce::var SoundEngine::getInstrumentEditorData(int instrumentIndex) const
     result->setProperty("rootNote", instrument.rootMidiNote);
     result->setProperty("rootCents", instrument.rootCents);
     result->setProperty("pitched", instrument.pitchDetected);
+    result->setProperty("useOriginal", instrument.useOriginalSource != nullptr
+        && instrument.useOriginalSource->load(std::memory_order_relaxed));
     result->setProperty("confidence", instrument.pitchConfidence);
     result->setProperty("loop", instrument.selectedLoop != nullptr ? instrument.selectedLoop->load() : 0);
     juce::Array<juce::var> loops;
@@ -693,6 +697,8 @@ PreparedGeneratedSample SoundEngine::copyGeneratedSampleForSaving(int instrument
     copy.rootMidiNote = instrument.rootMidiNote;
     copy.rootCents = instrument.rootCents;
     copy.pitchConfidence = instrument.pitchConfidence;
+    copy.trimStart = instrument.playbackStart != nullptr ? instrument.playbackStart->load() : 0.0f;
+    copy.trimEnd = instrument.playbackEnd != nullptr ? instrument.playbackEnd->load() : 1.0f;
     copy.oneShot = instrument.selectedLoop == nullptr || instrument.selectedLoop->load() == 0;
     copy.loopStart = instrument.loopStart;
     copy.loopEnd = instrument.loopEnd;
@@ -781,7 +787,7 @@ void SoundEngine::noteOn(int midiNote, float velocity)
     AudioEvent ev;
     ev.type = AudioEvent::Type::NoteOn;
     ev.note = midiNote;
-    ev.velocity = velocity;
+    ev.velocity = velocityTouch.load(std::memory_order_relaxed) ? velocity : 0.9f;
     pushEvent(ev);
     displayNoteOnSerial.fetch_add(1, std::memory_order_relaxed);
 }
@@ -1077,5 +1083,9 @@ void SoundEngine::handleIncomingMidiMessage(juce::MidiInput* /*source*/, const j
     else if (message.isAllNotesOff())
     {
         allNotesOff();
+    }
+    else if (message.isPitchWheel())
+    {
+        setPitchWheel(message.getPitchWheelValue());
     }
 }
