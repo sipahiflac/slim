@@ -1,5 +1,5 @@
 # Builds 2G for macOS (Intel + Apple Silicon): the standalone 2G.app, the 2G.vst3 plug-in and the 2G.component Audio Unit.
-# Run it from the Actions tab ("Run workflow"), or push a tag like v1.0.0.
+# Run it from the Actions tab ("Run workflow"), or push a tag like v1.0.1.
 #
 # With the signing secrets below the result is a signed, notarised installer (2G-macOS.pkg) that puts 2G.app in
 # /Applications, 2G.vst3 in /Library/Audio/Plug-Ins/VST3 and 2G.component in /Library/Audio/Plug-Ins/Components: customers just open it. Without them it is only an
@@ -107,9 +107,9 @@ jobs:
             pkgbuild --analyze --root "root-$part" "$part.plist"
             plutil -replace 0.BundleIsRelocatable -bool false "$part.plist"
           done
-          pkgbuild --root root-app --component-plist app.plist --identifier com.scrapbrainaudio.2g.app --version 1.0.0 --install-location /Applications app.pkg
-          pkgbuild --root root-vst3 --component-plist vst3.plist --identifier com.scrapbrainaudio.2g.vst3 --version 1.0.0 --install-location /Library/Audio/Plug-Ins/VST3 vst3.pkg
-          pkgbuild --root root-au --component-plist au.plist --identifier com.scrapbrainaudio.2g.au --version 1.0.0 --install-location /Library/Audio/Plug-Ins/Components au.pkg
+          pkgbuild --root root-app --component-plist app.plist --identifier com.scrapbrainaudio.2g.app --version 1.0.1 --install-location /Applications app.pkg
+          pkgbuild --root root-vst3 --component-plist vst3.plist --identifier com.scrapbrainaudio.2g.vst3 --version 1.0.1 --install-location /Library/Audio/Plug-Ins/VST3 vst3.pkg
+          pkgbuild --root root-au --component-plist au.plist --identifier com.scrapbrainaudio.2g.au --version 1.0.1 --install-location /Library/Audio/Plug-Ins/Components au.pkg
           productbuild --package app.pkg --package vst3.pkg --package au.pkg --sign "${{ secrets.MAC_SIGN_INSTALLER_ID }}" --timestamp 2G-macOS.pkg
 
       - name: Notarise and staple

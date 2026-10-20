@@ -989,7 +989,7 @@ const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 let demoMode=false,demoBackground='blue',demoToggleAt=0;
 const BACKLIGHT_TIMES=[5,10,15,30,60,0];
 const BEND_RANGES=[0,1,2,5,12]; // semitones; 0 = ignore the pitch wheel
-let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:1,messages:true,velocityTouch:true,bendRange:2};
+let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:3,messages:true,velocityTouch:true,bendRange:2};
 try {
     const saved=JSON.parse(localStorage.getItem('scratel.settings') || '{}');
     if(BACKLIGHT_TIMES.includes(saved.backlightSeconds)) phoneSettings.backlightSeconds=saved.backlightSeconds;
