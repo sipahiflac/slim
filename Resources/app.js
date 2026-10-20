@@ -12,42 +12,9 @@ window.addEventListener('wheel', e => {
     else if(e.deltaY||e.deltaX)wakeBacklight();
 }, { passive: false });
 window.addEventListener('keydown', e => {
-    if(e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyE'||e.key.toLowerCase()==='e')){
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat)armMascotGlitchPreview();
-        return;
-    }
-    if(e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyD'||e.key.toLowerCase()==='d')){
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat)requestDemoToggle();
-        return;
-    }
-    if(e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyF'||e.key.toLowerCase()==='f')){
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat){freePreview=!freePreview;if(currentState===ScreenState.AI_OPTIONS)genOptionsRow=studioUnlocked()?0:3;render();}
-        return;
-    }
-    if(demoMode&&e.ctrlKey&&!e.shiftKey&&!e.altKey&&/^[1-5]$/.test(e.key)){ // demo macros 1..5
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat)playDemoMacro(Number(e.key)-1);
-        return;
-    }
-    if(demoMode&&e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyB'||e.key.toLowerCase()==='b')){
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat)replayDemoBoot();
-        return;
-    }
-    if(e.ctrlKey&&e.shiftKey&&!e.altKey&&(e.code==='KeyM'||e.key.toLowerCase()==='m')){
-        e.preventDefault();e.stopImmediatePropagation();
-        if(!e.repeat)previewInboxMessage();
-        return;
-    }
+    // Release build: the developer chords (Ctrl+Shift+E/D/F/M/B, demo macros, F12 screenshots) are not wired.
     if ((e.ctrlKey || e.metaKey) && ['+', '-', '=', '0', 'r', 'R'].includes(e.key)) e.preventDefault();
-    if (e.key === 'F12') {
-        e.preventDefault();e.stopImmediatePropagation();
-        window.exportPhoneScreenshots?.();
-        return;
-    }
+    if (e.key === 'F12') { e.preventDefault(); e.stopImmediatePropagation(); return; } // no WebView dev tools
     if (e.key === 'F5') e.preventDefault();
     if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.phonePhysical&&!navigationFeedbackSuppressed){
         const selector=e.phoneFeedbackSelector||{
@@ -933,8 +900,6 @@ function armMascotGlitchPreview(){
     forceNextMascotGlitch=true;
     wakeBacklight();
 }
-window.__JUCE__?.backend?.addEventListener?.('previewMascotGlitch',armMascotGlitchPreview);
-window.__JUCE__?.backend?.addEventListener?.('toggleDemoMode',requestDemoToggle);
 function cancelMenuOpen(){
     if(menuOpenTimer!==null)clearTimeout(menuOpenTimer);
     if(idleReturnTimer!==null)clearTimeout(idleReturnTimer);
@@ -972,6 +937,33 @@ function returnHomeFromMenu(){
     paintIdlePoseImmediately();
 }
 
+// The speaker model can be mistaken for a bad sample, so B is pointed out until it has been tried: the desk hint
+// once per launch after a few notes, and one SMS tip after more playing. Neither comes back once B was pressed.
+const speakerTip=(()=>{
+    let state={pressed:false,notes:0};
+    try{const saved=JSON.parse(localStorage.getItem('2g.speaker-tip')||'null');if(saved&&typeof saved==='object')state={...state,...saved};}catch(_){}
+    const save=()=>{try{localStorage.setItem('2g.speaker-tip',JSON.stringify(state));}catch(_){}};
+    let sessionNotes=0,hintShown=false,hintTimer=null;
+    const calm=()=>[ScreenState.IDLE,ScreenState.MENU,ScreenState.VOICE_CATEGORIES,ScreenState.VOICES_LIST].includes(currentState);
+    return {
+        played(count){
+            if(state.pressed||demoMode)return;
+            sessionNotes+=count;state.notes=Number(state.notes||0)+count;
+            if(!hintShown&&sessionNotes>=12){
+                hintShown=true;window.showSpeakerHint?.(true);
+                hintTimer=setTimeout(()=>window.showSpeakerHint?.(false),10000);
+            }
+            if(state.notes>=60&&phoneSettings.messages&&calm()&&!messageStore.delivered.includes('speaker-tip-v1')
+               &&!document.documentElement.classList.contains('booting'))
+                deliverInboxMessage('speaker-tip-v1');
+            save();
+        },
+        pressed(){
+            clearTimeout(hintTimer);window.showSpeakerHint?.(false);
+            if(!state.pressed){state.pressed=true;save();}
+        }
+    };
+})();
 let lastNoteOnSerial=null;
 let noteGatePollBusy=false;
 setInterval(()=>{
@@ -983,13 +975,13 @@ setInterval(()=>{
         while(Array.isArray(raw)&&raw.length===1)raw=raw[0];
         const serial=Number(raw?.noteOns);
         if(Number.isFinite(serial)){
-            if(lastNoteOnSerial!==null&&serial!==lastNoteOnSerial)wakeBacklight();
+            if(lastNoteOnSerial!==null&&serial!==lastNoteOnSerial){wakeBacklight();speakerTip.played(Math.max(1,serial-lastNoteOnSerial));}
             lastNoteOnSerial=serial;
         }
     }).catch(()=>{}).finally(()=>{noteGatePollBusy=false;});
 },100);
 
-const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37};
+const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37,UPDATE:38};
 // A plug-in always renders through its DAW; only standalone owns an output device.
 const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 
@@ -1002,7 +994,7 @@ try {
     const saved=JSON.parse(localStorage.getItem('scratel.settings') || '{}');
     if(BACKLIGHT_TIMES.includes(saved.backlightSeconds)) phoneSettings.backlightSeconds=saved.backlightSeconds;
     if(Number.isInteger(saved.keyVolume) && saved.keyVolume>=0 && saved.keyVolume<=10) phoneSettings.keyVolume=saved.keyVolume;
-    if([0,1,2].includes(saved.promptStrength))phoneSettings.promptStrength=saved.promptStrength;
+    if([0,1,2,3].includes(saved.promptStrength))phoneSettings.promptStrength=saved.promptStrength;
     if(typeof saved.messages==='boolean')phoneSettings.messages=saved.messages;
     if(typeof saved.velocityTouch==='boolean')phoneSettings.velocityTouch=saved.velocityTouch;
     if(BEND_RANGES.includes(saved.bendRange))phoneSettings.bendRange=saved.bendRange;
@@ -1215,7 +1207,10 @@ const MESSAGE_CATALOG=[
     // Retain older inbox items and answer IDs without scheduling them again.
     {id:'first-impression',title:'2G check-in',body:'How is 2G so far?',options:['Great','Good','Needs work','Not sure']},
     {id:'next-improvement',title:'Your pick',body:'Improve next?',options:['Sounds','Editing','Interface','Stability']},
-    {id:'test',title:'Test message',body:'Is inbox easy?',options:['Yes','Mostly','Needs work','Not sure'],testOnly:true}
+    {id:'test',title:'Test message',body:'Is inbox easy?',options:['Yes','Mostly','Needs work','Not sure'],testOnly:true},
+    // Not scheduled by time: speakerTip delivers it once, after some playing, to someone who never pressed B.
+    {id:'speaker-tip-v1',title:'tip: the B key',paged:true,
+        body:"2g plays through a tiny phone speaker on purpose. that's part of the sound.\n\npress B on your keyboard to hear it without the speaker, and B again to bring it back.\n\nthe desk says BYPASSED while it's off."}
 ];
 let messageChat={stage:0,phase:'question',scroll:0,preview:false,answers:{}};
 let messageChatTimer=null,messageTypingTimer=null,messageTypingFrame=0;
@@ -1329,7 +1324,6 @@ function previewInboxMessage(){
     const now=performance.now();if(now-lastTestMessageAt<400)return;
     lastTestMessageAt=now;stopMessageChatTimers();deliverInboxMessage('preview-chat',{preview:true});
 }
-window.__JUCE__?.backend?.addEventListener?.('previewInboxMessage',previewInboxMessage);
 let messageScheduleTimer=null;
 function scheduleNextMessage(){
     clearTimeout(messageScheduleTimer);
@@ -1400,8 +1394,54 @@ const aiPromptInput=document.getElementById('ai-prompt-input');
 const licenseCodeInput=document.getElementById('license-code-input');
 let licenseData={status:'unlicensed'},licenseCursorOn=true,licenseRequestSerial=0;
 function phoneSettingIds(){
-    const ids=IS_PLUGIN_HOST?['light','keySound','messages','velocity','bend']:['output','light','keySound','messages','velocity','bend'];
+    const ids=IS_PLUGIN_HOST?['light','keySound','messages','velocity','bend','update']:['output','light','keySound','messages','velocity','bend','update'];
     return licenseData.status==='active'?[...ids,'license']:['license',...ids];
+}
+// ---- Update check ---------------------------------------------------------------------------------------------
+// Asks the server about once a day (and at start while a known update is pending) whether a newer build is out.
+// Nothing is downloaded or run by the app: "Get" opens the download page in the browser, the user installs it.
+let updateInfo={newer:false,latest:'',notes:'',current:'',checkedAt:0},updateChecking=false,updateMessage='';
+try{const saved=JSON.parse(localStorage.getItem('2g.update')||'null');if(saved&&typeof saved==='object')updateInfo={...updateInfo,...saved};}catch(_){}
+const UPDATE_INTERVAL=20*60*60*1000;
+async function checkForUpdates(manual=false){
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('checkForUpdate');
+    if(!fn||updateChecking)return false;
+    updateChecking=true;if(manual){updateMessage='';render();}
+    try{
+        const result=unwrapNativeResult(await fn());
+        if(result.ok!==true)throw new Error('offline');
+        updateInfo={newer:!!result.newer,latest:String(result.latest||''),notes:String(result.notes||''),
+            current:String(result.current||''),checkedAt:Date.now()};
+        try{localStorage.setItem('2g.update',JSON.stringify(updateInfo));}catch(_){}
+        if(manual&&!updateInfo.newer)updateMessage='Up to date';
+        return true;
+    }catch(_){if(manual)updateMessage='No connection';return false;}
+    finally{updateChecking=false;if([ScreenState.SETTINGS,ScreenState.UPDATE].includes(currentState))render();}
+}
+function scheduleUpdateChecks(){
+    const due=()=>updateInfo.newer||Date.now()-Number(updateInfo.checkedAt||0)>UPDATE_INTERVAL;
+    setTimeout(()=>{if(due())checkForUpdates();},20000); // after start, off the boot path
+    setInterval(()=>{if(Date.now()-Number(updateInfo.checkedAt||0)>UPDATE_INTERVAL)checkForUpdates();},60*60*1000);
+}
+window.addEventListener('phoneReady',scheduleUpdateChecks,{once:true});
+function updateSettingLabel(){
+    if(updateChecking)return 'Update: ...';
+    if(updateInfo.newer)return 'Update: v'+updateInfo.latest;
+    return updateMessage?'Update: '+updateMessage:'Update: Check';
+}
+async function openUpdatePage(){
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('openUpdatePage');if(!fn)return;
+    let opened=unwrapNativeResult(await fn().catch(()=>false))===true;
+    // The page link lives only in the native side and only for this run: check again, then open.
+    if(!opened&&await checkForUpdates(true)&&updateInfo.newer)opened=unwrapNativeResult(await fn().catch(()=>false))===true;
+    updateMessage=opened?'Opened in browser':'Try again later';render();
+}
+function renderUpdate(){
+    clearScreen();drawListTitle('Update');
+    drawStringInkCentered(15,'v'+updateInfo.latest,FONTS.Display,1);
+    if(updateInfo.notes)drawStringCentered(30,fitTextWithEllipsis(updateInfo.notes,88,FONTS.Regular),FONTS.Regular,1);
+    drawStringCentered(42,updateChecking?'Checking':updateMessage||('Now v'+(updateInfo.current||'?')),FONTS.Regular,1);
+    drawSoftkeys(updateChecking?'':'Get','Back');
 }
 let licenseChecked=false; // the first answer from the server has arrived
 function setLicenseData(data){
@@ -1488,25 +1528,28 @@ function generationSuffix(prompt,strength){
     if(strength<=0)return '';
     const words=new Set((prompt.toLowerCase().match(/[\p{L}\p{N}]+/gu)||[]));
     const has=word=>words.has(word);
+    const any=list=>list.some(has);
     const chord=has('chord');
     const space=['reverb','cave','hall','cathedral','room','underwater'].some(has);
     const terms=[];
-    if(strength===1){
-        terms.push(chord?'one sustained chord':'one single sustained musical note');
-        if(!chord)terms.push('clear stable pitch in the natural register');
-        terms.push('clear attack','steady sustain','natural release');
-        if(!space)terms.push('dry studio recording');
-        terms.push('no melody','no repeated notes');
+    if(strength===3){ // Auto: mirrors GenerationPrompt::buildAuto
+        const synth=any(['synth','synthesizer','synthesiser','fm','square','saw','sawtooth','sine','digital','analog','analogue','chiptune','pad','lead','drone']);
+        const heldWord=any(['pad','drone','sustained','held','ambient','atmosphere','texture','hum']);
+        const struck=any(['guitar','harpsichord','piano','bell','bells','pluck','plucked','harp','marimba','vibraphone','xylophone','glockenspiel','kalimba','banjo','mandolin','ukulele','koto','sitar','rhodes','wurlitzer','clavinet','chime','chimes','gong','pizzicato','stab','plucky','plucks','staccato','short']);
+        const heldInstrument=any(['cello','violin','viola','strings','flute','clarinet','oboe','saxophone','sax','trumpet','trombone','horn','brass','accordion','harmonium','harmonica','theremin','whistle','organ','choir','vocal','voice','bass','synth','synthesizer','sine','saw','sawtooth','square','wave']);
+        const chordLike=any(['chord','chords','minor','major']);
+        if(heldWord||(!struck&&heldInstrument))terms.push(chordLike?'one long held chord':'one long held note','steady and sustained');
+        else if(struck)terms.push(chordLike?'one single chord':'one single note','ringing out naturally');
+        else terms.push(chordLike?'one long held chord':'one long held musical tone','steady pitch');
+        terms.push(synth?'solo synthesizer recording':space?'solo recording':'close-miked solo recording');
+    }else if(strength===1){
+        terms.push(chord?'one long held chord':'one long held note','solo');
+        if(!space)terms.push('close-miked');
     }else{
-        terms.push('one isolated playable sampler source');
-        if(!chord)terms.push('single sustained monophonic note in a comfortable natural register');
-        terms.push('stable fundamental pitch','clear natural attack','long steady sustain section',
-            'consistent tone and loudness','complete natural release','centered and close');
-        if(!space)terms.push('studio-dry');
-        terms.push('no melody');
-        if(!chord)terms.push('no chord');
-        terms.push('no repeated notes','no demonstration','no layered background',
-            'compact timbre with a clear readable midrange');
+        terms.push(chord?'a solo recording of one long sustained chord':'a solo recording of one long sustained note',
+            'at a steady pitch','the instrument alone');
+        if(!space)terms.push('close-miked');
+        terms.push('ringing out naturally at the end');
     }
     return ', '+terms.join(', ');
 }
@@ -1537,11 +1580,13 @@ function closeAiOptions(){
     try{localStorage.setItem('2g.gen-options',JSON.stringify(genOptions));}catch(_){}
     currentState=ScreenState.AI_PROMPT;render();focusAiPrompt();
 }
-const STRENGTH_NAMES=['None','Medium','Strong'];
+const STRENGTH_NAMES=['None','Medium','Strong','Auto']; // indexed by phoneSettings.promptStrength
+const STRENGTH_ORDER=[3,2,1,0]; // the order they are cycled in
 function changeGenOption(direction,wrap=false){
     if(genOptionsRow===3){ // system prompt: free for everyone, stored with the other phone settings
-        const next=wrap?(phoneSettings.promptStrength+2)%3:Math.max(0,Math.min(2,phoneSettings.promptStrength-direction));
-        phoneSettings.promptStrength=next;
+        const at=STRENGTH_ORDER.indexOf(phoneSettings.promptStrength);
+        const next=wrap?(at+1)%STRENGTH_ORDER.length:Math.max(0,Math.min(STRENGTH_ORDER.length-1,at+direction));
+        phoneSettings.promptStrength=STRENGTH_ORDER[next];
         try{localStorage.setItem('scratel.settings',JSON.stringify(phoneSettings));}catch(_){}
         render();return;
     }
@@ -1569,19 +1614,13 @@ function drawMicro(text,x,y,tone){
 // system prompt row is free for everyone and, like in Settings, shows a Strong..None slider while selected.
 function renderAiOptions(){
     const unlocked=studioUnlocked(),shown=effectiveGenOptions();
-    const rows=['Length: '+shown.length+' sec','Influence: '+shown.match+'/10','Loop: '+(shown.loop?'On':'Off'),'System prompt'];
+    const rows=['Length: '+shown.length+' sec','Influence: '+shown.match+'/10','Loop: '+(shown.loop?'On':'Off'),'System: '+STRENGTH_NAMES[phoneSettings.promptStrength]];
     clearScreen();drawListTitle('Options');
     rows.forEach((label,index)=>{
         const locked=index<3&&!unlocked,active=!locked&&index===genOptionsRow,y=LCD_LAYOUT.listTop+1+index*LCD_LAYOUT.listRowHeight;
         if(active){ctx.fillStyle=getColor(1);ctx.fillRect(4,y-1,88,9);}
         const tone=active?0:locked?2:1;
-        if(index===3&&active){
-            drawString(6,y,'Strong',FONTS.Regular,tone);
-            const rightX=90-measureString('None',FONTS.Regular);
-            drawString(rightX,y,'None',FONTS.Regular,tone);
-            const x=6+measureString('Strong',FONTS.Regular)+3;
-            drawLcdSlider(x,y+3,rightX-x-3,(2-phoneSettings.promptStrength)/2,false,tone,1);
-        }else drawString(6,y,label,FONTS.Regular,tone);
+        drawString(6,y,label,FONTS.Regular,tone);
         if(!locked)addLcdTarget(4,y-1,88,10,()=>{genOptionsRow=index;changeGenOption(1,true);});
     });
     // STUDIO tag on the info line other screens use for counters: a padlock before it while locked.
@@ -2445,9 +2484,10 @@ function renderPhoneSettings() {
         light:'Light: '+light,keySound:'Key sound: '+phoneSettings.keyVolume+'/10',
         messages:'Messages: '+(phoneSettings.messages?'On':'Off'),
         velocity:'Velocity: '+(phoneSettings.velocityTouch?'Touch':'Fixed'),
-        bend:'Pitch bend: '+(phoneSettings.bendRange?'+-'+phoneSettings.bendRange:'Off')};
+        bend:'Pitch bend: '+(phoneSettings.bendRange?'+-'+phoneSettings.bendRange:'Off'),
+        update:updateSettingLabel()};
     const rows=ids.map(id=>labels[id]);
-    const left=['output','license'].includes(selected)?'Select':settingsEditing?'Done':'Change';
+    const left=['output','license','update'].includes(selected)?'Select':settingsEditing?'Done':'Change';
     renderHandsetList('Settings',rows,settingsRow,left);
     if(settingsError)drawStringCentered(54,fitTextWithEllipsis(settingsError,88,FONTS.Regular),FONTS.Regular,1);
 }
@@ -2547,7 +2587,7 @@ function renderAiGenerating() {
         drawNeuralNetwork(elapsed);
         const dots='.'.repeat(Math.floor(elapsed*2)%4);
         drawStringCentered(53,'Creating Audio'+dots,FONTS.Regular,1);
-    } else drawStringCentered(31,'CHECK SETUP',FONTS.Regular,1);
+    } else drawStringCentered(31,fitText(aiError,88,FONTS.Regular),FONTS.Regular,1);
     drawSoftkeys(aiError?'Retry':'','Back');
 }
 function drawNeuralNetwork(elapsed){
@@ -2751,8 +2791,12 @@ function generateAiSample() {
     importPreviousVoice=selectedVoiceIndex;importReturnState=ScreenState.AI_PROMPT;
     const options=effectiveGenOptions();
     fn(aiPrompt,phoneSettings.promptStrength,{duration:options.length,influence:options.match/10,loop:options.loop}).then(async raw=>{
-        if(serial!==aiRequestSerial)return;
         const result=unwrapNativeResult(raw);
+        // Left with Back while it was being made: the paid sound is already the engine's pending draft, so keep
+        // it as one (the next Make asks Save/Discard) instead of leaving a draft that blocks every later sound.
+        if(serial!==aiRequestSerial){if(result.ok){importDraft=true;importCategory='Generated';refreshSoundMakerCredits(true);}return;}
+        // A draft the page does not know about (e.g. a reopened plug-in window): offer to save or discard it.
+        if(!result.ok&&result.error==='Save or discard first'){importDraft=true;importConfirmRow=0;currentState=ScreenState.IMPORT_CONFIRM;render();return;}
         if(!result.ok){aiError=String(result.error||'Generation failed');render();return;}
         aiWaveformMin=Array.isArray(result.waveformMin)?result.waveformMin.map(Number):[];
         aiWaveformMax=Array.isArray(result.waveformMax)?result.waveformMax.map(Number):[];
@@ -3179,6 +3223,7 @@ function renderScreenContent(){
     else if (currentState === ScreenState.SETTINGS) renderPhoneSettings();
     else if (currentState === ScreenState.AUDIO_OUTPUTS) renderAudioOutputs();
     else if (currentState === ScreenState.LICENSE_STATUS) renderLicenseStatus();
+    else if (currentState === ScreenState.UPDATE) renderUpdate();
     else if (currentState === ScreenState.LICENSE_INPUT) renderLicenseInput();
     else if (currentState === ScreenState.LICENSE_CHECK) renderLicenseCheck();
     else if (currentState === ScreenState.ROOT_TUNE) renderRootTune();
@@ -3365,6 +3410,11 @@ window.addEventListener('keydown', (e) => {
         }
         return;
     }
+    if(currentState===ScreenState.UPDATE){
+        if(e.key==='Escape'||e.key==='Backspace'){updateMessage='';currentState=ScreenState.SETTINGS;render();e.preventDefault();}
+        else if((e.key==='Enter'||e.key===' ')&&!updateChecking){openUpdatePage();e.preventDefault();}
+        return;
+    }
     if(currentState===ScreenState.LICENSE_STATUS){
         if(e.key==='Escape'||e.key==='Backspace'){currentState=ScreenState.SETTINGS;render();e.preventDefault();}
         else if(e.key==='Enter'||e.key===' '){
@@ -3502,6 +3552,7 @@ window.addEventListener('keydown', (e) => {
         } else if(e.key==='Enter' || e.key===' ') {
             if(id==='output'){settingsEditing=false;loadAudioOutputs(true);}
             else if(id==='license'){settingsEditing=false;checkLicenseStatus();}
+            else if(id==='update'){settingsEditing=false;if(updateInfo.newer){updateMessage='';currentState=ScreenState.UPDATE;}else checkForUpdates(true);}
             else if(id==='messages'||id==='velocity'||id==='bend')adjustPhoneSetting(1);
             else settingsEditing=!settingsEditing;
         }
@@ -3561,7 +3612,7 @@ window.addEventListener('keydown', (e) => {
     // 'B' key: Toggle speaker emulation layer for A/B comparison
     if (k === 'b' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         emitJuce('toggleSpeaker', {});
-        refreshSpeakerBypass(120);
+        refreshSpeakerBypass(120);speakerTip.pressed();
         e.preventDefault();
         return;
     }

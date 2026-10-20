@@ -109,7 +109,8 @@ private:
     // Envelope state
     EnvStage envStage = EnvStage::OFF;
     float envLevel = 0.0f;
-    float attackCoefficient = 0.01f;
+    float attackPhase = 0.0f;      // 0..1 through the attack; level = phase squared
+    float attackIncrement = 1.0f;
     float decayFactor = 0.9999f;
     float releaseFactor = 0.92f; // Fast, click-free release when key released
     bool releaseFull = false;

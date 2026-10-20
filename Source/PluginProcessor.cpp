@@ -242,6 +242,16 @@ public:
                     });
                 })) done(errorResult("Service busy"));
             })
+            .withNativeFunction("checkForUpdate", [this](const auto&, auto done) {
+                juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
+                if (!juce::Thread::launch([safeThis, done]() mutable {
+                    auto result = LicenseClient::checkForUpdate();
+                    juce::MessageManager::callAsync([safeThis, result = std::move(result), done = std::move(done)]() mutable {
+                        if (safeThis != nullptr) done(std::move(result));
+                    });
+                })) done(errorResult("Service busy"));
+            })
+            .withNativeFunction("openUpdatePage", [](const auto&, auto done) { done(LicenseClient::openUpdatePage()); })
             .withNativeFunction("activateLicense", [this](const auto& args, auto done) {
                 const auto code = args.isEmpty() ? juce::String() : args[0].toString();
                 juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
@@ -330,7 +340,7 @@ public:
 
         webView = std::make_unique<juce::WebBrowserComponent>(options);
         addAndMakeVisible(*webView); setConstrainer(&sizeConstrainer); setResizable(true, false); setSize(320, 440);
-        devShortcutWatcher = std::make_unique<DevShortcutWatcher>(*webView);
+        // Release build: no native developer-shortcut watcher (DevShortcutWatcher.h is kept for development builds).
         webView->goToURL(juce::WebBrowserComponent::getResourceProviderRoot());
     }
 
@@ -379,6 +389,8 @@ private:
     {
         const auto prompt = rawPrompt.trim().substring(0, 450);
         if (prompt.isEmpty()) { completion(errorResult("Write something")); return; }
+        // Checked before the request: install() would refuse it after the credit was already spent.
+        if (sampleImporter->pending()) { completion(errorResult("Save or discard first")); return; }
         const bool forceUnpitched = prompt.containsWholeWordIgnoreCase("chord");
         const auto apiPrompt = GenerationPrompt::build(prompt, promptStrength);
         if (apiPrompt.length() > 450) { completion(errorResult("Shorten prompt")); return; }
@@ -391,7 +403,7 @@ private:
         {
             juce::String error;
             auto audio = LicenseClient::generate(apiPrompt, influence, error, generationOptions);
-            auto prepared = error.isEmpty() ? ToneCard::prepareGeneratedSample(audio, prompt, forceUnpitched, false)
+            auto prepared = error.isEmpty() ? ToneCard::prepareGeneratedSample(audio, prompt, forceUnpitched, false, true)
                                             : PreparedGeneratedSample{};
             if (prepared.error.isNotEmpty()) error = prepared.error;
             else if (error.isEmpty()) SoundEngine::calibratePrepared(prepared);

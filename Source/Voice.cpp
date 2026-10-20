@@ -46,9 +46,11 @@ void Voice::updateParams(const VoiceParams& p)
     currentParams.clampAll();
 
     const float attackT = (currentParams.attack - 1.0f) / 9.0f;
-    const float attackSeconds = 0.002f * std::pow(1000.0f, attackT); // 2 ms .. 2 s, logarithmic time.
-    // The analog-like rise approaches 1.05 and reaches 1 at the chosen time.
-    attackCoefficient = -std::expm1(-std::log(21.0f) / (attackSeconds * kEngineSampleRateF));
+    // 0.5 ms .. 3 s on a cubic curve: 1-2 keep the sample's own transient, 3-4 soften it, 5 and up are
+    // audible swells (about 0.1 s at 4, 0.4 s at 5.5, 0.9 s at 7). The old 2 ms..2 s log scale spent half the
+    // knob under 60 ms, and its RC curve was at -5 dB a quarter of the way in, so it barely changed anything.
+    const float attackSeconds = 0.0005f + 2.9995f * attackT * attackT * attackT;
+    attackIncrement = 1.0f / std::max(1.0f, attackSeconds * kEngineSampleRateF);
 
     releaseFull = currentParams.release >= 9.999f;
     const float releaseT = (std::min(currentParams.release, 9.0f) - 1.0f) / 8.0f;
@@ -119,6 +121,7 @@ void Voice::noteOn(int midiNote, float velocity, const Instrument* instrument, c
     heldQualitySample = 0.0f;
     age = 0;
     envLevel = 0.0f;
+    attackPhase = 0.0f;
     envStage = EnvStage::ATTACK;
     loopReleased = false;
     loopCrossfading = false;
@@ -181,12 +184,15 @@ float Voice::renderSample(bool movementEnabled)
     // 1. Amplitude envelope
     if (envStage == EnvStage::ATTACK)
     {
-        envLevel += attackCoefficient * (1.05f - envLevel);
-        if (envLevel >= 1.0f)
+        // A squared ramp is a swell the ear hears all the way (-12 dB halfway), like a sampler's attack;
+        // the old RC rise was most of the way up almost at once.
+        attackPhase += attackIncrement;
+        if (attackPhase >= 1.0f)
         {
             envLevel = 1.0f;
             envStage = EnvStage::SUSTAIN_DECAY;
         }
+        else envLevel = attackPhase * attackPhase;
     }
     else if (envStage == EnvStage::SUSTAIN_DECAY)
     {

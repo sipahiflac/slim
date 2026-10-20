@@ -241,6 +241,18 @@ MainComponent::MainComponent()
                 });
             })) done(makeGenerationError("Service busy"));
         })
+        .withNativeFunction("checkForUpdate", [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            if (!juce::Thread::launch([safeThis, done]() mutable {
+                auto result = LicenseClient::checkForUpdate();
+                juce::MessageManager::callAsync([safeThis, result = std::move(result), done = std::move(done)]() mutable {
+                    if (safeThis != nullptr) done(std::move(result));
+                });
+            })) done(makeGenerationError("Service busy"));
+        })
+        .withNativeFunction("openUpdatePage", [](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            done(LicenseClient::openUpdatePage());
+        })
         .withNativeFunction("activateLicense", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion done) {
             const auto code = args.isEmpty() ? juce::String() : args[0].toString();
             juce::Component::SafePointer<MainComponent> safeThis(this);
@@ -378,7 +390,7 @@ MainComponent::MainComponent()
 
     webView = std::make_unique<juce::WebBrowserComponent>(options);
     addAndMakeVisible(*webView);
-    devShortcutWatcher = std::make_unique<DevShortcutWatcher>(*webView);
+    // Release build: no native developer-shortcut watcher (DevShortcutWatcher.h is kept for development builds).
 
     setSize(320, 440);
 
@@ -599,6 +611,12 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
         completion(makeGenerationError("Write something"));
         return;
     }
+    if (sampleImporter->pending())
+    {
+        // Checked before the request: install() would refuse it after the credit was already spent.
+        completion(makeGenerationError("Save or discard first"));
+        return;
+    }
 
     const bool forceUnpitched = prompt.containsWholeWordIgnoreCase("chord");
     const auto apiPrompt = GenerationPrompt::build(prompt, promptStrength);
@@ -619,7 +637,7 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
         PreparedGeneratedSample prepared;
         if (error.isEmpty())
         {
-            prepared = ToneCard::prepareGeneratedSample(audio, prompt, forceUnpitched, false);
+            prepared = ToneCard::prepareGeneratedSample(audio, prompt, forceUnpitched, false, true);
             if (prepared.error.isNotEmpty()) error = prepared.error;
             else SoundEngine::calibratePrepared(prepared);
         }

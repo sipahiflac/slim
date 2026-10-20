@@ -22,7 +22,8 @@ public:
         if (!juce::Thread::launch([audio = std::vector<float>(sample.processed.begin() + (ptrdiff_t) from, sample.processed.begin() + (ptrdiff_t) to), done] {
             const auto pitch = SamplePitch::analyseSelection(audio);
             auto* result = new juce::DynamicObject();
-            result->setProperty("ok", !audio.empty()); result->setProperty("rootNote", pitch.note);
+            result->setProperty("ok", !audio.empty());
+            result->setProperty("rootNote", pitch.pitched ? SamplePitch::foldRoot(pitch.note) : pitch.note);
             result->setProperty("rootCents", pitch.cents); result->setProperty("pitched", pitch.pitched);
             result->setProperty("confidence", pitch.confidence);
             juce::MessageManager::callAsync([done, result = juce::var(result)] { done(result); });
@@ -74,6 +75,8 @@ public:
     static juce::var error(const juce::String& message) {
         auto* result = new juce::DynamicObject(); result->setProperty("ok", false); result->setProperty("error", message); return juce::var(result);
     }
+    // A draft or an import still open: a new generation could not be installed, so it must not be paid for.
+    bool pending() const { return busy || draft >= 0; }
     juce::var install(PreparedGeneratedSample prepared) {
         if (busy || draft >= 0) return error("Save or discard first");
         prepared.importDraft = true;

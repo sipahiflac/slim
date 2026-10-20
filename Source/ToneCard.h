@@ -105,7 +105,8 @@ struct ToneCard
     static std::vector<float> decodeAudioMemory(const juce::MemoryBlock& audioData);
     static PreparedGeneratedSample prepareGeneratedSample(const juce::MemoryBlock& audioData,
                                                           const juce::String& prompt,
-                                                          bool forceUnpitched = false, bool saveFiles = true);
+                                                          bool forceUnpitched = false, bool saveFiles = true,
+                                                          bool expectPitch = false);
     static void analyseGeneratedPlayback(PreparedGeneratedSample& sample);
     static void saveGeneratedSampleFiles(const PreparedGeneratedSample& sample, float exactRootNote);
 

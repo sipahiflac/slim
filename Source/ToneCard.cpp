@@ -145,7 +145,7 @@ void writeGeneratedWav(const juce::File& file, const std::vector<float>& samples
 
 PreparedGeneratedSample ToneCard::prepareGeneratedSample(const juce::MemoryBlock& audioData,
                                                          const juce::String& prompt,
-                                                         bool forceUnpitched, bool saveFiles)
+                                                         bool forceUnpitched, bool saveFiles, bool expectPitch)
 {
     PreparedGeneratedSample result;
     result.prompt = prompt.trim();
@@ -190,14 +190,13 @@ PreparedGeneratedSample ToneCard::prepareGeneratedSample(const juce::MemoryBlock
     for (auto& sample : result.processed) sample *= normalise;
 
     // YIN is measured after the onset, over several frames. Confidence mixes
-    const auto pitch = SamplePitch::analyse(result.processed, kEngineSampleRate);
+    auto pitch = SamplePitch::analyse(result.processed, kEngineSampleRate);
+    // A generated sound was asked for as a note. When the strict pass (built so uploaded drums and noise get no
+    // root) finds none, it gets the root screen's Auto analysis, so it is not left Unpitched until Auto is pressed.
+    if (expectPitch && !forceUnpitched && !pitch.pitched)
+        pitch = SamplePitch::analyseSelection(result.processed, kEngineSampleRate);
     result.pitched = !forceUnpitched && pitch.pitched;
-    // The sample keeps its own register: a bass is not declared a C2 and then played two octaves up from the middle
-    // key. The root is folded into F#3..F#4 (same note name, nearest octave), so the middle of the keyboard plays
-    // the sound at roughly its natural pitch, thick if it is thick.
-    int root = pitch.note;
-    if (result.pitched) { while (root < 54) root += 12; while (root > 66) root -= 12; }
-    result.rootMidiNote = root;
+    result.rootMidiNote = result.pitched ? SamplePitch::foldRoot(pitch.note) : pitch.note;
     result.rootCents = pitch.cents;
     result.pitchConfidence = pitch.confidence;
 

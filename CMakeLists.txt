@@ -74,6 +74,7 @@ else()
 endif()
 
 target_compile_definitions(FakePhoneScreen PRIVATE
+    TWO_G_VERSION="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=1
     ${PHONE_WEBVIEW_DEFINITIONS}
     JUCE_USE_CURL=0
@@ -176,6 +177,7 @@ target_link_libraries(Melodragon2G PRIVATE
 )
 
 target_compile_definitions(Melodragon2G PRIVATE
+    TWO_G_VERSION="${PROJECT_VERSION}"
     JUCE_WEB_BROWSER=1
     ${PHONE_WEBVIEW_DEFINITIONS}
     JUCE_USE_CURL=0

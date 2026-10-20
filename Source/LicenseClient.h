@@ -31,6 +31,10 @@ public:
                                     const juce::String& messageId, int choice);
     static juce::MemoryBlock generate(const juce::String& text, float influence, juce::String& error,
                                       const GenerationOptions& options = {});
+    // Asks the server whether a newer build is published: { ok, newer, current, latest, notes }. The download page is
+    // kept here (never handed to the page), so openUpdatePage() can only open a checked scrapbrainaudio.com link.
+    static juce::var checkForUpdate();
+    static bool openUpdatePage();
 
 private:
     static juce::String deviceId();

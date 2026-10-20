@@ -1,6 +1,8 @@
 #include "LicenseClient.h"
 #include "AppPaths.h"
+#include <algorithm>
 #include <cstring>
+#include <iterator>
 
 #if JUCE_MAC
  #include <CommonCrypto/CommonDigest.h>
@@ -286,4 +288,89 @@ juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influe
         audio.reset();
     }
     return audio;
+}
+
+namespace
+{
+#ifndef TWO_G_VERSION
+ #define TWO_G_VERSION "0.0.0"
+#endif
+juce::CriticalSection updateLock;
+juce::String updatePage; // the last checked download page, opened only by openUpdatePage()
+
+// "1.2.3" -> comparable triple; anything else is not a version.
+bool parseVersion(const juce::String& text, int (&parts)[3])
+{
+    const auto pieces = juce::StringArray::fromTokens(text.trim(), ".", {});
+    if (pieces.size() != 3) return false;
+    for (int i = 0; i < 3; ++i)
+    {
+        if (pieces[i].isEmpty() || !pieces[i].containsOnly("0123456789") || pieces[i].length() > 3) return false;
+        parts[i] = pieces[i].getIntValue();
+    }
+    return true;
+}
+
+// Only an https page on scrapbrainaudio.com (or a subdomain) is ever opened, whatever the server says.
+bool isOwnDownloadPage(const juce::String& link)
+{
+    if (!link.startsWith("https://")) return false;
+    const auto host = juce::URL(link).getDomain().toLowerCase();
+    return host == "scrapbrainaudio.com" || host.endsWith(".scrapbrainaudio.com");
+}
+}
+
+juce::var LicenseClient::checkForUpdate()
+{
+    auto* result = new juce::DynamicObject();
+    result->setProperty("ok", false);
+    result->setProperty("current", TWO_G_VERSION);
+    const auto service = endpoint();
+    if (service.isEmpty()) return juce::var(result);
+
+    auto* body = new juce::DynamicObject();
+   #if JUCE_MAC
+    body->setProperty("platform", "macos");
+   #else
+    body->setProperty("platform", "windows");
+   #endif
+    body->setProperty("version", TWO_G_VERSION);
+    const auto target = service.upToLastOccurrenceOf("/", true, false) + "melodragon-update";
+    int status = 0;
+    juce::MemoryBlock response;
+    const auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+        .withHttpRequestCmd("POST")
+        .withExtraHeaders("Content-Type: application/json\r\nAccept: application/json\r\n")
+        .withConnectionTimeoutMs(9000).withNumRedirectsToFollow(0).withStatusCode(&status);
+    if (auto stream = juce::URL(target).withPOSTData(juce::JSON::toString(juce::var(body))).createInputStream(options))
+        stream->readIntoMemoryBlock(response, 4096);
+    if (status != 200) return juce::var(result);
+    const auto answer = juce::JSON::parse(juce::String::fromUTF8((const char*)response.getData(), (int)response.getSize()));
+    if (!answer.isObject() || !(bool)answer["ok"]) return juce::var(result);
+
+    int current[3] {}, latest[3] {};
+    const auto latestText = answer["latest"].toString();
+    const auto link = answer["url"].toString();
+    const bool newer = (bool)answer["newer"] && parseVersion(TWO_G_VERSION, current) && parseVersion(latestText, latest)
+        && std::lexicographical_compare(std::begin(current), std::end(current), std::begin(latest), std::end(latest))
+        && isOwnDownloadPage(link);
+    {
+        const juce::ScopedLock lock(updateLock);
+        updatePage = newer ? link : juce::String();
+    }
+    result->setProperty("ok", true);
+    result->setProperty("newer", newer);
+    result->setProperty("latest", newer ? latestText : juce::String(TWO_G_VERSION));
+    if (newer) result->setProperty("notes", answer["notes"].toString().substring(0, 60));
+    return juce::var(result);
+}
+
+bool LicenseClient::openUpdatePage()
+{
+    juce::String link;
+    {
+        const juce::ScopedLock lock(updateLock);
+        link = updatePage;
+    }
+    return isOwnDownloadPage(link) && juce::URL(link).launchInDefaultBrowser();
 }

@@ -128,6 +128,11 @@ inline Result analyseSelection(const std::vector<float>& audio, double rate = 16
     return result;
 }
 
+// The sample keeps its own register: a bass is not declared a C2 and then played two octaves up from the middle
+// key. The root is folded into F#3..F#4 (same note name, nearest octave), so the middle of the keyboard plays the
+// sound at roughly its natural pitch. Generation and the root screen's Auto both use it, so they agree.
+inline int foldRoot(int note) { while (note < 54) note += 12; while (note > 66) note -= 12; return note; }
+
 inline Result analyse(const std::vector<float>& audio, double rate = 16000)
 {
     Result result;

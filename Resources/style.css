@@ -74,3 +74,5 @@ html.demo-blue #device-container { background: none; }
 /* Faint "BYPASSED" tag while the speaker model is off. */
 .speaker-bypass { position: absolute; z-index: 30; left: 10px; top: 14px; width: 64px; height: 14px; image-rendering: pixelated; pointer-events: none; opacity: .6; }
 .speaker-bypass[hidden] { display: none; }
+.speaker-hint { animation: speaker-hint-in 600ms steps(4) both; }
+@keyframes speaker-hint-in { from { opacity: 0; } to { opacity: .6; } }
