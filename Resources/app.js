@@ -989,7 +989,7 @@ const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 let demoMode=false,demoBackground='blue',demoToggleAt=0;
 const BACKLIGHT_TIMES=[5,10,15,30,60,0];
 const BEND_RANGES=[0,1,2,5,12]; // semitones; 0 = ignore the pitch wheel
-let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:3,messages:true,velocityTouch:true,bendRange:2};
+let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:3,messages:true,velocityTouch:true,bendRange:2,speaker:false};
 try {
     const saved=JSON.parse(localStorage.getItem('scratel.settings') || '{}');
     if(BACKLIGHT_TIMES.includes(saved.backlightSeconds)) phoneSettings.backlightSeconds=saved.backlightSeconds;
@@ -998,8 +998,9 @@ try {
     if(typeof saved.messages==='boolean')phoneSettings.messages=saved.messages;
     if(typeof saved.velocityTouch==='boolean')phoneSettings.velocityTouch=saved.velocityTouch;
     if(BEND_RANGES.includes(saved.bendRange))phoneSettings.bendRange=saved.bendRange;
+    if(typeof saved.speaker==='boolean')phoneSettings.speaker=saved.speaker;
 } catch (_) {}
-let backlightOn=true,backlightTimer=null,settingsRow=0,settingsEditing=false,settingsError='';
+let backlightOn=true,backlightTimer=null,settingsRow=0,settingsEditing=false,settingsError='',settingsGroup=null; // settingsGroup: null = the category list
 let audioOutputs=[],audioOutputName='System default',audioOutputType='',audioOutputRow=0,audioOutputError='';
 function wakeBacklight() {
     clearTimeout(backlightTimer);backlightTimer=null;
@@ -1017,6 +1018,7 @@ function adjustPhoneSetting(direction) {
     } else if(id==='keySound')phoneSettings.keyVolume=Math.max(0,Math.min(10,phoneSettings.keyVolume+direction));
     else if(id==='messages')phoneSettings.messages=!phoneSettings.messages;
     else if(id==='velocity')phoneSettings.velocityTouch=!phoneSettings.velocityTouch;
+    else if(id==='speaker'){emitJuce('toggleSpeaker',{});refreshSpeakerBypass(120);speakerTip.pressed();}
     else if(id==='bend'){const i=BEND_RANGES.indexOf(phoneSettings.bendRange);phoneSettings.bendRange=BEND_RANGES[(i+direction+BEND_RANGES.length)%BEND_RANGES.length];}
     settingsError='';
     try {localStorage.setItem('scratel.settings',JSON.stringify(phoneSettings));}
@@ -1049,7 +1051,7 @@ function chooseAudioOutput() {
         const result=unwrapNativeResult(raw);
         if(!result.ok){audioOutputError=String(result.error||'Output failed');render();return;}
         audioOutputName=String(result.current||name);audioOutputError='';
-        currentState=ScreenState.SETTINGS;settingsRow=phoneSettingIds().indexOf('output');render();
+        currentState=ScreenState.SETTINGS;settingsGroup='sound';settingsRow=phoneSettingIds().indexOf('output');render();
     }).catch(()=>{audioOutputError='Output failed';render();});
 }
 window.addEventListener('pointerdown',wakeBacklight);
@@ -1210,7 +1212,7 @@ const MESSAGE_CATALOG=[
     {id:'test',title:'Test message',body:'Is inbox easy?',options:['Yes','Mostly','Needs work','Not sure'],testOnly:true},
     // Not scheduled by time: speakerTip delivers it once, after some playing, to someone who never pressed B.
     {id:'speaker-tip-v1',title:'tip: the B key',paged:true,
-        body:"2g plays through a tiny phone speaker on purpose. that's part of the sound.\n\npress B on your keyboard to hear it without the speaker, and B again to bring it back.\n\nthe desk says BYPASSED while it's off."}
+        body:"2g can play through a tiny phone speaker. it's a big part of the character.\n\npress B on your keyboard to hear it, and B again to go back to the clean sound. it's also in settings > sound."}
 ];
 let messageChat={stage:0,phase:'question',scroll:0,preview:false,answers:{}};
 let messageChatTimer=null,messageTypingTimer=null,messageTypingFrame=0;
@@ -1393,9 +1395,13 @@ function editRowCount(){return 1+1+EDIT_PARAMETERS.length+1+(generatedVoice()&&!
 const aiPromptInput=document.getElementById('ai-prompt-input');
 const licenseCodeInput=document.getElementById('license-code-input');
 let licenseData={status:'unlicensed'},licenseCursorOn=true,licenseRequestSerial=0;
+// Settings are grouped: the first screen lists the categories, each opens its own short list.
+const SETTINGS_GROUPS=[{id:'sound',title:'Sound'},{id:'phone',title:'Phone'},{id:'account',title:'Account'}];
 function phoneSettingIds(){
-    const ids=IS_PLUGIN_HOST?['light','keySound','messages','velocity','bend','update']:['output','light','keySound','messages','velocity','bend','update'];
-    return licenseData.status==='active'?[...ids,'license']:['license',...ids];
+    if(!settingsGroup)return SETTINGS_GROUPS.map(g=>'group:'+g.id);
+    if(settingsGroup==='sound')return IS_PLUGIN_HOST?['speaker','velocity','bend']:['output','speaker','velocity','bend'];
+    if(settingsGroup==='phone')return ['light','keySound','messages'];
+    return licenseData.status==='active'?['update','license']:['license','update'];
 }
 // ---- Update check ---------------------------------------------------------------------------------------------
 // Asks the server about once a day (and at start while a known update is pending) whether a newer build is out.
@@ -2480,15 +2486,16 @@ function formatSettingsOutput(name) {
 function renderPhoneSettings() {
     const light=phoneSettings.backlightSeconds ? phoneSettings.backlightSeconds+' sec' : 'Always';
     const ids=phoneSettingIds(),selected=ids[settingsRow];
-    const labels={license:'License',output:formatSettingsOutput(audioOutputName),
+    const labels={'group:sound':'Sound','group:phone':'Phone','group:account':'Account',
+        speaker:'Speaker: '+(speakerModelOn?'Phone':'Off'),license:'License',output:formatSettingsOutput(audioOutputName),
         light:'Light: '+light,keySound:'Key sound: '+phoneSettings.keyVolume+'/10',
         messages:'Messages: '+(phoneSettings.messages?'On':'Off'),
         velocity:'Velocity: '+(phoneSettings.velocityTouch?'Touch':'Fixed'),
         bend:'Pitch bend: '+(phoneSettings.bendRange?'+-'+phoneSettings.bendRange:'Off'),
         update:updateSettingLabel()};
     const rows=ids.map(id=>labels[id]);
-    const left=['output','license','update'].includes(selected)?'Select':settingsEditing?'Done':'Change';
-    renderHandsetList('Settings',rows,settingsRow,left);
+    const left=['output','license','update'].includes(selected)||String(selected).startsWith('group:')?'Select':['messages','velocity','bend','speaker'].includes(selected)?'Change':settingsEditing?'Done':'Change';
+    renderHandsetList(settingsGroup?SETTINGS_GROUPS.find(g=>g.id===settingsGroup).title:'Settings',rows,settingsRow,left);
     if(settingsError)drawStringCentered(54,fitTextWithEllipsis(settingsError,88,FONTS.Regular),FONTS.Regular,1);
 }
 function renderAudioOutputs() {
@@ -3546,14 +3553,17 @@ window.addEventListener('keydown', (e) => {
     }
     if(currentState===ScreenState.SETTINGS) {
         const ids=phoneSettingIds(),id=ids[settingsRow],rowCount=ids.length;
-        const editable=['light','keySound','messages','velocity','bend'].includes(id);
+        const editable=['light','keySound','messages','velocity','bend','speaker'].includes(id);
         if(e.key==='Escape' || e.key==='Backspace') {
-            if(settingsEditing)settingsEditing=false;else currentState=ScreenState.MENU;
+            if(settingsEditing)settingsEditing=false;
+            else if(settingsGroup){const at=SETTINGS_GROUPS.findIndex(g=>g.id===settingsGroup);settingsGroup=null;settingsRow=Math.max(0,at);}
+            else currentState=ScreenState.MENU;
         } else if(e.key==='Enter' || e.key===' ') {
-            if(id==='output'){settingsEditing=false;loadAudioOutputs(true);}
+            if(String(id).startsWith('group:')){settingsGroup=id.slice(6);settingsRow=0;settingsEditing=false;}
+            else if(id==='output'){settingsEditing=false;loadAudioOutputs(true);}
             else if(id==='license'){settingsEditing=false;checkLicenseStatus();}
             else if(id==='update'){settingsEditing=false;if(updateInfo.newer){updateMessage='';currentState=ScreenState.UPDATE;}else checkForUpdates(true);}
-            else if(id==='messages'||id==='velocity'||id==='bend')adjustPhoneSetting(1);
+            else if(id==='messages'||id==='velocity'||id==='bend'||id==='speaker')adjustPhoneSetting(1);
             else settingsEditing=!settingsEditing;
         }
         else if((e.key==='ArrowLeft'||e.key==='ArrowRight')&&editable)adjustPhoneSetting(e.key==='ArrowLeft'?-1:1);
@@ -3653,7 +3663,7 @@ window.addEventListener('keydown', (e) => {
             } else if (page.title === 'Games') {
                 currentState=ScreenState.GAMES;render();
             } else if (page.title === 'Settings') {
-                currentState=ScreenState.SETTINGS;settingsRow=0;settingsEditing=false;if(!IS_PLUGIN_HOST)loadAudioOutputs();refreshSoundMakerCredits();render();
+                currentState=ScreenState.SETTINGS;settingsGroup=null;settingsRow=0;settingsEditing=false;if(!IS_PLUGIN_HOST)loadAudioOutputs();refreshSoundMakerCredits();render();
             }
         } else if (currentState === ScreenState.VOICES_LIST) {
             editReturnState=ScreenState.VOICES_LIST;
@@ -4088,14 +4098,26 @@ async function finishStartup(){
         render();await boot.finish();
     }catch(error){console.warn('Startup:',error);boot.fail();}
 }
-// The speaker model is on at start; the engine owns the real state, so ask it (after a B press, and once at start).
+// The speaker model is off at start (clean sound); the engine owns the real state, so ask it (after B or the Settings row,
+// and once at start). A plug-in keeps the choice in the host project; the standalone remembers it in Settings.
+let speakerModelOn=false;
+function readSpeakerSim(){
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('getSpeakerSim');
+    return fn?fn().then(raw=>{let on=raw;while(Array.isArray(on))on=on[0];return !(on===false||on===0);}):Promise.reject(new Error('no bridge'));
+}
 function refreshSpeakerBypass(delay=0){
     setTimeout(()=>{
-        const fn=window.__JUCE__?.backend?.getNativeFunction?.('getSpeakerSim');
-        fn?.().then(raw=>{let on=raw;while(Array.isArray(on))on=on[0];window.setSpeakerBypassed?.(on===false||on===0);}).catch(()=>{});
+        readSpeakerSim().then(on=>{
+            speakerModelOn=on;window.setSpeakerBypassed?.(!on);
+            if(phoneSettings.speaker!==on){phoneSettings.speaker=on;try{localStorage.setItem('scratel.settings',JSON.stringify(phoneSettings));}catch(_){}}
+            if(currentState===ScreenState.SETTINGS)render();
+        }).catch(()=>{});
     },delay);
 }
-window.addEventListener('phoneReady',()=>refreshSpeakerBypass(0),{once:true});
+window.addEventListener('phoneReady',()=>{
+    if(IS_PLUGIN_HOST){refreshSpeakerBypass(0);return;}
+    readSpeakerSim().then(on=>{if(on!==phoneSettings.speaker)emitJuce('toggleSpeaker',{});refreshSpeakerBypass(120);}).catch(()=>{});
+},{once:true});
 // Keyboard without clicking first: the page asks the native side to give it keyboard focus when the pointer enters
 // it, when the window is activated and once it is ready. (The standalone also does this on window activation.)
 (()=>{

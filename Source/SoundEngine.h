@@ -288,7 +288,7 @@ private:
     static constexpr float speakerOutputTrim = 0.8f;
 
     // A/B Comparison Bypass Toggle
-    std::atomic<bool> speakerSimEnabled{ true };
+    std::atomic<bool> speakerSimEnabled{ false }; // direct sound by default; B / Settings turn the phone speaker on
     std::atomic<bool> movementEnabled{ false };
     std::atomic<bool> velocityTouch{ true };
     std::atomic<float> bendRange{ 2.0f }, wheel{ 0.0f };

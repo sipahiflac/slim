@@ -214,12 +214,11 @@
     let saved=null;if(!plugin)try{saved=localStorage.getItem('2g-master-volume');}catch(_){}
     if(saved!==null&&Number.isFinite(Number(saved))){slider.value=String(Math.max(0,Math.min(200,Number(saved))));setVolume();}
     else window.__JUCE__?.backend?.getNativeFunction?.('getMasterVolume')?.().then(value=>{if(!volumeTouched)applyVolume(value);}).catch(error=>console.warn(error.message));
-    // "BYPASSED": a faint engraved tag, top left, only while the speaker model is off (B key). Same tiny 3x5 face
+    // "B: PHONE SPEAKER": a faint engraved hint, top left, shown now and then by app.js until B has been tried (the speaker model starts off). Same tiny 3x5 face
     // idea as the labels elsewhere on the desk; quiet on purpose.
-    // The hint "B: BYPASS SPEAKER" uses the same spot and face, shown now and then by app.js until B has been tried.
     const glyphs={B:'110 101 110 101 110',Y:'101 101 010 010 010',P:'110 101 110 100 100',A:'010 101 111 101 101',
         S:'011 100 010 001 110',E:'111 100 110 100 111',D:'110 101 101 101 110',K:'101 101 110 101 101',
-        R:'110 101 110 101 101',':':'000 010 000 010 000',' ':'000 000 000 000 000'};
+        R:'110 101 110 101 101',H:'101 101 111 101 101',O:'010 101 101 101 010',N:'101 111 111 101 101',':':'000 010 000 010 000',' ':'000 000 000 000 000'};
     function engravedTag(className,text,label){
         const canvas=document.createElement('canvas');canvas.className=className;canvas.width=text.length*4;canvas.height=7;
         canvas.hidden=true;canvas.setAttribute('aria-label',label);scene.appendChild(canvas);
@@ -233,10 +232,10 @@
         canvas.style.width=(canvas.width*2)+'px';
         return canvas;
     }
-    const bypass=engravedTag('speaker-bypass','BYPASSED','Speaker model bypassed');
-    const hint=engravedTag('speaker-bypass speaker-hint','B: BYPASS SPEAKER','Press B to bypass the speaker model');
-    window.setSpeakerBypassed=on=>{bypass.hidden=!on;if(on)hint.hidden=true;};
-    window.showSpeakerHint=on=>{hint.hidden=!on||!bypass.hidden;};
+    const hint=engravedTag('speaker-bypass speaker-hint','B: PHONE SPEAKER','Press B to hear the phone speaker model');
+    let speakerOn=false;
+    window.setSpeakerBypassed=bypassed=>{speakerOn=!bypassed;if(speakerOn)hint.hidden=true;};
+    window.showSpeakerHint=on=>{hint.hidden=!on||speakerOn;};
     paintVolume();
     if(window.__JUCE__?.backend?.getNativeFunction?.('setUiScale'))selectSize(selected).finally(()=>setTimeout(()=>{followWindow=true;},800));
     else followWindow=true;
