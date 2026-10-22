@@ -231,7 +231,15 @@ juce::var LicenseClient::checkStatus()
     if (service.isEmpty()) return reply("setup", "Service not configured");
     const auto code = readStoredCode(service);
     if (code.isEmpty()) return registerFree(service);
-    return request(service, "status", code);
+    auto result = request(service, "status", code);
+    // A Studio code that has run out (trial over, subscription ended) drops the device back to its own Free licence
+    // instead of leaving the app on "code not valid". The Studio code can be entered again after renewing.
+    if (result["status"].toString() == "invalid")
+    {
+        auto free = registerFree(service);
+        if (free["status"].toString() == "active") return free;
+    }
+    return result;
 }
 
 juce::var LicenseClient::submitFeedback(const juce::String& installationId,
