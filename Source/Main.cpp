@@ -7,7 +7,7 @@ public:
     FakePhoneScreenApplication() {}
 
     const juce::String getApplicationName() override       { return "2G"; }
-    const juce::String getApplicationVersion() override    { return "1.0.2"; }
+    const juce::String getApplicationVersion() override    { return "1.0.3"; }
     bool moreThanOneInstanceAllowed() override             { return true; }
 
     void initialise(const juce::String&) override

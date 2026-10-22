@@ -167,7 +167,7 @@ bool LicenseClient::storeCode(const juce::String& service, const juce::String& c
 }
 
 juce::var LicenseClient::request(const juce::String& service, const juce::String& action,
-                                  const juce::String& code)
+                                  const juce::String& code, juce::String* issuedCode)
 {
     auto* payload = new juce::DynamicObject();
     payload->setProperty("licenseCode", code);
@@ -198,7 +198,19 @@ juce::var LicenseClient::request(const juce::String& service, const juce::String
     result->setProperty("validUntil", decoded["validUntil"].isString() ? decoded["validUntil"].toString() : juce::String());
     result->setProperty("unlimited", (bool)decoded["unlimited"]);
     if (decoded["credits"].isInt()) result->setProperty("credits", (int) decoded["credits"]);
+    if (issuedCode != nullptr) *issuedCode = canonicalCode(decoded["licenseCode"].toString());
     return juce::var(result);
+}
+
+juce::var LicenseClient::registerFree(const juce::String& service)
+{
+    juce::String issued;
+    auto result = request(service, "register", {}, &issued);
+    if (result["status"].toString() != "active")
+        return result["status"].toString() == "device_conflict" ? reply("unlicensed") : result; // conflict: this device has a code from an e-mail, ask for it
+    if (issued.isEmpty()) return reply("offline", "Service unavailable");
+    if (!storeCode(service, issued)) return reply("storage_error", "Could not save code");
+    return result;
 }
 
 juce::var LicenseClient::activate(const juce::String& enteredCode)
@@ -218,7 +230,7 @@ juce::var LicenseClient::checkStatus()
     const auto service = endpoint();
     if (service.isEmpty()) return reply("setup", "Service not configured");
     const auto code = readStoredCode(service);
-    if (code.isEmpty()) return reply("unlicensed");
+    if (code.isEmpty()) return registerFree(service);
     return request(service, "status", code);
 }
 

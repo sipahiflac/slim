@@ -42,5 +42,7 @@ private:
     static juce::String readStoredCode(const juce::String& service);
     static bool storeCode(const juce::String& service, const juce::String& code);
     static juce::var request(const juce::String& service, const juce::String& action,
-                             const juce::String& code);
+                             const juce::String& code, juce::String* issuedCode = nullptr);
+    // First launch without a saved code: the server hands this device its own Free licence.
+    static juce::var registerFree(const juce::String& service);
 };
