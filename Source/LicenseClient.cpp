@@ -345,6 +345,23 @@ juce::var LicenseClient::checkForUpdate()
     auto* result = new juce::DynamicObject();
     result->setProperty("ok", false);
     result->setProperty("current", TWO_G_VERSION);
+    // Development only: SCRAPBRAIN_FAKE_UPDATE=9.9.9 makes the app behave as if the server had announced that version,
+    // so the Update screen and its Get key can be seen without publishing anything. Unset, this does nothing.
+    const auto fake = juce::SystemStats::getEnvironmentVariable("SCRAPBRAIN_FAKE_UPDATE", {}).trim();
+    int fakeParts[3] {}, runningParts[3] {};
+    if (fake.isNotEmpty() && parseVersion(fake, fakeParts) && parseVersion(TWO_G_VERSION, runningParts)
+        && std::lexicographical_compare(std::begin(runningParts), std::end(runningParts), std::begin(fakeParts), std::end(fakeParts)))
+    {
+        {
+            const juce::ScopedLock lock(updateLock);
+            updatePage = "https://download.scrapbrainaudio.com/2G.zip";
+        }
+        result->setProperty("ok", true);
+        result->setProperty("newer", true);
+        result->setProperty("latest", fake);
+        result->setProperty("notes", "Simulated update (dev)");
+        return juce::var(result);
+    }
     const auto service = endpoint();
     if (service.isEmpty()) return juce::var(result);
 
