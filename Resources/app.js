@@ -989,12 +989,12 @@ const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 let demoMode=false,demoBackground='blue',demoToggleAt=0;
 const BACKLIGHT_TIMES=[5,10,15,30,60,0];
 const BEND_RANGES=[0,1,2,5,12]; // semitones; 0 = ignore the pitch wheel
-let phoneSettings={backlightSeconds:15,keyVolume:7,promptStrength:3,messages:true,velocityTouch:true,bendRange:2,speaker:false};
+let phoneSettings={backlightSeconds:15,keyVolume:7,enhancePrompt:true,messages:true,velocityTouch:true,bendRange:2,speaker:false};
 try {
     const saved=JSON.parse(localStorage.getItem('scratel.settings') || '{}');
     if(BACKLIGHT_TIMES.includes(saved.backlightSeconds)) phoneSettings.backlightSeconds=saved.backlightSeconds;
     if(Number.isInteger(saved.keyVolume) && saved.keyVolume>=0 && saved.keyVolume<=10) phoneSettings.keyVolume=saved.keyVolume;
-    if([0,1,2,3].includes(saved.promptStrength))phoneSettings.promptStrength=saved.promptStrength;
+    if(typeof saved.enhancePrompt==='boolean')phoneSettings.enhancePrompt=saved.enhancePrompt;
     if(typeof saved.messages==='boolean')phoneSettings.messages=saved.messages;
     if(typeof saved.velocityTouch==='boolean')phoneSettings.velocityTouch=saved.velocityTouch;
     if(BEND_RANGES.includes(saved.bendRange))phoneSettings.bendRange=saved.bendRange;
@@ -1527,39 +1527,8 @@ function activateLicenseCode(){
 let aiPrompt='',aiWaveformMin=[],aiWaveformMax=[],aiDuration=0,aiError='',aiRequestSerial=0,aiAnimationStartedAt=0,aiCursorOn=true;
 let aiPreviewMode=false,aiPreviewReturnState=ScreenState.MENU;
 let aiRootNote=60,aiCents=0,aiPitched=false,aiConfidence=0,aiUseOriginal=false,aiTuneRow=0;
-// The request that leaves the app is the prompt plus a system-prompt suffix chosen by Settings > System prompt
-// (and by words like "chord" or "reverb"), and the whole of it must stay within 450 characters. This mirrors
-// GenerationPrompt::build in Source/GenerationPrompt.h, so the limit shown here is the real one.
-function generationSuffix(prompt,strength){
-    if(strength<=0)return '';
-    const words=new Set((prompt.toLowerCase().match(/[\p{L}\p{N}]+/gu)||[]));
-    const has=word=>words.has(word);
-    const any=list=>list.some(has);
-    const chord=has('chord');
-    const space=['reverb','cave','hall','cathedral','room','underwater'].some(has);
-    const terms=[];
-    if(strength===3){ // Auto: mirrors GenerationPrompt::buildAuto
-        const synth=any(['synth','synthesizer','synthesiser','fm','square','saw','sawtooth','sine','digital','analog','analogue','chiptune','pad','lead','drone']);
-        const heldWord=any(['pad','drone','sustained','held','ambient','atmosphere','texture','hum']);
-        const struck=any(['guitar','harpsichord','piano','bell','bells','pluck','plucked','harp','marimba','vibraphone','xylophone','glockenspiel','kalimba','banjo','mandolin','ukulele','koto','sitar','rhodes','wurlitzer','clavinet','chime','chimes','gong','pizzicato','stab','plucky','plucks','staccato','short']);
-        const heldInstrument=any(['cello','violin','viola','strings','flute','clarinet','oboe','saxophone','sax','trumpet','trombone','horn','brass','accordion','harmonium','harmonica','theremin','whistle','organ','choir','vocal','voice','bass','synth','synthesizer','sine','saw','sawtooth','square','wave']);
-        const chordLike=any(['chord','chords','minor','major']);
-        if(heldWord||(!struck&&heldInstrument))terms.push(chordLike?'one long held chord':'one long held note','steady and sustained');
-        else if(struck)terms.push(chordLike?'one single chord':'one single note','ringing out naturally');
-        else terms.push(chordLike?'one long held chord':'one long held musical tone','steady pitch');
-        terms.push(synth?'solo synthesizer recording':space?'solo recording':'close-miked solo recording');
-    }else if(strength===1){
-        terms.push(chord?'one long held chord':'one long held note','solo');
-        if(!space)terms.push('close-miked');
-    }else{
-        terms.push(chord?'a solo recording of one long sustained chord':'a solo recording of one long sustained note',
-            'at a steady pitch','the instrument alone');
-        if(!space)terms.push('close-miked');
-        terms.push('ringing out naturally at the end');
-    }
-    return ', '+terms.join(', ');
-}
-function promptCharLimit(text){return Math.max(0,450-generationSuffix(String(text).trim(),phoneSettings.promptStrength).length);}
+// The raw text is what leaves the app; the server rewrites it (melodragon-generate), so the limit is the plain 450.
+function promptCharLimit(){return 450;}
 const promptField=new LcdTextField(aiPromptInput,{maxLength:promptCharLimit,multiline:true,
     onChange:()=>{aiPrompt=aiPromptInput.value.slice(0,450);render();}});
 function focusAiPrompt(){setTimeout(()=>{if(currentState!==ScreenState.AI_PROMPT)return;promptField.setValue(aiPrompt);promptField.focus();},0);}
@@ -1586,13 +1555,9 @@ function closeAiOptions(){
     try{localStorage.setItem('2g.gen-options',JSON.stringify(genOptions));}catch(_){}
     currentState=ScreenState.AI_PROMPT;render();focusAiPrompt();
 }
-const STRENGTH_NAMES=['None','Medium','Strong','Auto']; // indexed by phoneSettings.promptStrength
-const STRENGTH_ORDER=[3,2,1,0]; // the order they are cycled in
 function changeGenOption(direction,wrap=false){
-    if(genOptionsRow===3){ // system prompt: free for everyone, stored with the other phone settings
-        const at=STRENGTH_ORDER.indexOf(phoneSettings.promptStrength);
-        const next=wrap?(at+1)%STRENGTH_ORDER.length:Math.max(0,Math.min(STRENGTH_ORDER.length-1,at+direction));
-        phoneSettings.promptStrength=STRENGTH_ORDER[next];
+    if(genOptionsRow===3){ // prompt enhancer: free for everyone, stored with the other phone settings
+        phoneSettings.enhancePrompt=!phoneSettings.enhancePrompt;
         try{localStorage.setItem('scratel.settings',JSON.stringify(phoneSettings));}catch(_){}
         render();return;
     }
@@ -1620,7 +1585,7 @@ function drawMicro(text,x,y,tone){
 // system prompt row is free for everyone and, like in Settings, shows a Strong..None slider while selected.
 function renderAiOptions(){
     const unlocked=studioUnlocked(),shown=effectiveGenOptions();
-    const rows=['Length: '+shown.length+' sec','Influence: '+shown.match+'/10','Loop: '+(shown.loop?'On':'Off'),'System: '+STRENGTH_NAMES[phoneSettings.promptStrength]];
+    const rows=['Length: '+shown.length+' sec','Influence: '+shown.match+'/10','Loop: '+(shown.loop?'On':'Off'),'Enhance: '+(phoneSettings.enhancePrompt?'On':'Off')];
     clearScreen();drawListTitle('Options');
     rows.forEach((label,index)=>{
         const locked=index<3&&!unlocked,active=!locked&&index===genOptionsRow,y=LCD_LAYOUT.listTop+1+index*LCD_LAYOUT.listRowHeight;
@@ -2797,7 +2762,7 @@ function generateAiSample() {
     const serial=++aiRequestSerial;aiError='';aiAnimationStartedAt=performance.now();currentState=ScreenState.AI_GENERATING;render();
     importPreviousVoice=selectedVoiceIndex;importReturnState=ScreenState.AI_PROMPT;
     const options=effectiveGenOptions();
-    fn(aiPrompt,phoneSettings.promptStrength,{duration:options.length,influence:options.match/10,loop:options.loop}).then(async raw=>{
+    fn(aiPrompt,{duration:options.length,influence:options.match/10,loop:options.loop,enhance:phoneSettings.enhancePrompt}).then(async raw=>{
         const result=unwrapNativeResult(raw);
         // Left with Back while it was being made: the paid sound is already the engine's pending draft, so keep
         // it as one (the next Make asks Save/Discard) instead of leaving a draft that blocks every later sound.
@@ -2868,7 +2833,10 @@ function editorRow(rowIndex) {
     if(rowIndex===3+EDIT_PARAMETERS.length)return {kind:'rename',label:'Rename'};
     return {kind:'delete',label:'Delete sample'};
 }
-function editLoopName(){return editLoopSelection>0?`Loop ${editLoopSelection}`:'Off';}
+function editLoopName(){
+    if(editLoopSelection<=0)return 'Off';
+    return editLoopRegions[editLoopSelection-1]?.full?'Full':`Loop ${editLoopSelection}`;
+}
 function editRootName(){const note=Math.max(0,Math.min(127,Math.round(editRootNote)));return NOTE_NAMES[note%12]+(Math.floor(note/12)-1);}
 function brightnessCutoff(value){return 100*Math.pow(72,(value-1)/9);}
 function brightnessLabel(value){
@@ -2897,8 +2865,9 @@ function renderEditWaveform() {
     ctx.fillRect(sx,1,3,1);ctx.fillRect(ex-2,27,3,1);
     const loop=editLoopSelection>0?editLoopRegions[editLoopSelection-1]:null;
     if(loop) {
-        const lx=x0+Math.round(Math.max(0,Math.min(1,loop.start))*width);
-        const rx=x0+Math.round(Math.max(0,Math.min(1,loop.end))*width);
+        // Full is the whole trimmed sound, so its bracket sits exactly on the two trim markers.
+        const lx=loop.full?sx:x0+Math.round(Math.max(0,Math.min(1,loop.start))*width);
+        const rx=loop.full?ex:x0+Math.round(Math.max(0,Math.min(1,loop.end))*width);
         ctx.fillStyle=getColor(1);
         ctx.fillRect(lx,27,Math.max(1,rx-lx+1),1);
         ctx.fillRect(lx,24,1,4);ctx.fillRect(rx,24,1,4);
@@ -3078,7 +3047,8 @@ function loadEditValues() {
         editRootCents=Number(data.rootCents)||0;editPitched=!!data.pitched;editUseOriginal=!!data.useOriginal;
         editLoopRegions=Array.isArray(data.loops)?data.loops.map(loop=>({
             start:Math.max(0,Math.min(1,Number(loop.start)||0)),
-            end:Math.max(0,Math.min(1,Number(loop.end)||0))
+            end:Math.max(0,Math.min(1,Number(loop.end)||0)),
+            full:loop.full===true
         })).filter(loop=>loop.end>loop.start):[];
         editLoopSelection=Math.max(0,Math.min(editLoopRegions.length,Math.round(Number(data.loop)||0)));
         render();

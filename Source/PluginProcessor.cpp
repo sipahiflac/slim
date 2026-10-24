@@ -4,7 +4,6 @@
 #include "AppPaths.h"
 #include "DevShortcutWatcher.h"
 #include "WebViewFolder.h"
-#include "GenerationPrompt.h"
 #include "LicenseClient.h"
 #include "SampleImporter.h"
 #include "PitchAnalysis.h"
@@ -318,8 +317,7 @@ public:
             })
             .withNativeFunction("generateSoundEffect", [this](const auto& args, auto done) {
                 generateSoundEffect(args.isEmpty() ? juce::String() : args[0].toString(),
-                                    args.size() > 1 ? (int)args[1] : 1,
-                                    args.size() > 2 ? args[2] : juce::var(), std::move(done));
+                                    args.size() > 1 ? args[1] : juce::var(), std::move(done));
             })
             .withEventListener("setMidiOptions", [this](const juce::var& data) {
                 processor.getEngine().setVelocityTouch(!data.hasProperty("touch") || (bool) data["touch"]);
@@ -384,7 +382,7 @@ public:
     void syncFromProcessor() { sendInstrumentUpdate(); }
 
 private:
-    void generateSoundEffect(const juce::String& rawPrompt, int promptStrength, const juce::var& options,
+    void generateSoundEffect(const juce::String& rawPrompt, const juce::var& options,
                              juce::WebBrowserComponent::NativeFunctionCompletion completion)
     {
         const auto prompt = rawPrompt.trim().substring(0, 450);
@@ -392,8 +390,7 @@ private:
         // Checked before the request: install() would refuse it after the credit was already spent.
         if (sampleImporter->pending()) { completion(errorResult("Save or discard first")); return; }
         const bool forceUnpitched = prompt.containsWholeWordIgnoreCase("chord");
-        const auto apiPrompt = GenerationPrompt::build(prompt, promptStrength);
-        if (apiPrompt.length() > 450) { completion(errorResult("Shorten prompt")); return; }
+        const auto& apiPrompt = prompt;
         const auto generationOptions = GenerationOptions::fromVar(options);
         const float influence = generationOptions.influence >= 0.0f ? generationOptions.influence : promptInfluence();
 
@@ -402,8 +399,10 @@ private:
                                    completion = std::move(completion)]() mutable
         {
             juce::String error;
-            auto audio = LicenseClient::generate(apiPrompt, influence, error, generationOptions);
-            auto prepared = error.isEmpty() ? ToneCard::prepareGeneratedSample(audio, prompt, forceUnpitched, false, true)
+            juce::String kind;
+            auto audio = LicenseClient::generate(apiPrompt, influence, error, generationOptions, &kind);
+            const bool unpitched = forceUnpitched || kind == "hit" || kind == "effect";
+            auto prepared = error.isEmpty() ? ToneCard::prepareGeneratedSample(audio, prompt, unpitched, false, !unpitched, generationOptions.loop)
                                             : PreparedGeneratedSample{};
             if (prepared.error.isNotEmpty()) error = prepared.error;
             else if (error.isEmpty()) SoundEngine::calibratePrepared(prepared);

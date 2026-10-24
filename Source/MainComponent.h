@@ -31,7 +31,6 @@ private:
     juce::var selectAudioOutput(const juce::String& deviceName);
     void saveAudioDeviceState();
     void generateSoundEffect(const juce::String& prompt,
-                             int promptStrength,
                              const juce::var& options,
                              juce::WebBrowserComponent::NativeFunctionCompletion completion);
     static std::optional<juce::WebBrowserComponent::Resource> handleResource(const juce::String& url);

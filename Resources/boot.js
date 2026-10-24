@@ -84,8 +84,9 @@
             }
         });
     }
-    // PS1-style exit: the console is wiped in one hard cut to black with only the small green logo (drawn at
-    // its true pixel size), held for a beat, then faded out smoothly to reveal the phone. Hard in, soft out.
+    // Exit: the console is wiped in one hard cut to the console's own background with only the small green logo
+    // (drawn at its true pixel size), held for a beat, then the whole screen rolls up like a shutter to reveal the
+    // phone. Hard in, quick mechanical out.
     const logo=new Image();logo.src='boot-logo.png';
     const logoReady=new Promise(resolve=>{logo.complete?resolve():(logo.onload=logo.onerror=resolve);});
     let dissolving=false;
@@ -93,17 +94,22 @@
         dissolving=true;
         await logoReady;
         const w=canvas.width,h=canvas.height;
-        context.fillStyle='#000';context.fillRect(0,0,w,h);
+        context.fillStyle='#1e1e1e';context.fillRect(0,0,w,h);
+        context.fillStyle='#232323'; // faint slat lines, the only hint of the shutter until it moves
+        for(let y=5;y<h;y+=6)context.fillRect(0,y,w,1);
         if(logo.naturalWidth){
             const tint=document.createElement('canvas');tint.width=logo.naturalWidth;tint.height=logo.naturalHeight;
             const tc=tint.getContext('2d');tc.drawImage(logo,0,0);
             tc.globalCompositeOperation='source-in';tc.fillStyle='#b6c777';tc.fillRect(0,0,tint.width,tint.height);
             context.drawImage(tint,Math.round((w-tint.width)/2),Math.round((h-tint.height)/2));
         }
-        layer.style.background='#000';layer.style.pointerEvents='none';
+        layer.style.pointerEvents='none';
         await new Promise(resolve=>setTimeout(resolve,700));
-        layer.style.transition='opacity 600ms ease-out';layer.style.opacity='0';
-        await new Promise(resolve=>setTimeout(resolve,620));
+        if(matchMedia('(prefers-reduced-motion:reduce)').matches)return;
+        // The bottom edge keeps a thin lit bar, like the lip of a roller shutter, while the screen travels up.
+        layer.style.boxShadow='0 3px 0 #6f8a3a';
+        layer.style.transition='transform 440ms cubic-bezier(.7,0,.3,1)';layer.style.transform='translateY(-100%)';
+        await new Promise(resolve=>setTimeout(resolve,470));
     }
     window.addEventListener('resize',()=>{if(!dissolving)paint();});
     log(`VIEW ${viewW}X${viewH}`);

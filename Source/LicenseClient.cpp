@@ -277,9 +277,10 @@ juce::var LicenseClient::submitFeedback(const juce::String& installationId,
 
 // The server authorizes every generation. Developer privileges never come from this client.
 juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influence, juce::String& error,
-                                          const GenerationOptions& tuning)
+                                          const GenerationOptions& tuning, juce::String* soundKind)
 {
     juce::MemoryBlock audio;
+    juce::StringPairArray responseHeaders;
     const auto service = endpoint();
     if (service.isEmpty()) { error = "License service not configured"; return audio; }
     const auto code = readStoredCode(service);
@@ -288,12 +289,13 @@ juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influe
     body->setProperty("licenseCode", code); body->setProperty("text", text);
     body->setProperty("deviceId", deviceId());
     body->setProperty("requestId", juce::Uuid().toDashedString()); body->setProperty("promptInfluence", influence);
-    body->setProperty("durationSeconds", tuning.durationSeconds); body->setProperty("loop", tuning.loop);
+    body->setProperty("durationSeconds", tuning.durationSeconds); body->setProperty("loop", tuning.loop); body->setProperty("enhance", tuning.enhance);
     const auto target = service.upToLastOccurrenceOf("/", true, false) + "melodragon-generate";
     int status = 0;
     auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
         .withHttpRequestCmd("POST").withExtraHeaders("Content-Type: application/json\r\nAccept: audio/mpeg\r\n")
-        .withConnectionTimeoutMs(80000).withNumRedirectsToFollow(0).withStatusCode(&status);
+        .withConnectionTimeoutMs(80000).withNumRedirectsToFollow(0).withStatusCode(&status)
+        .withResponseHeaders(&responseHeaders);
     if (auto stream = juce::URL(target).withPOSTData(juce::JSON::toString(juce::var(body))).createInputStream(options))
         stream->readIntoMemoryBlock(audio, 10000001);
     if (status != 200 || audio.getSize() == 0 || audio.getSize() > 10000000)
@@ -307,6 +309,8 @@ juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influe
               : status == 409 ? "Generation already running" : "Generation failed - try again";
         audio.reset();
     }
+    else if (soundKind != nullptr)
+        *soundKind = responseHeaders.getValue("x-sound-kind", {}); // what the server's rewrite decided this sound is
     return audio;
 }
 

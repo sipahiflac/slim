@@ -11,6 +11,7 @@ struct LoopRegion
     int end = 0;
     int crossfade = 0;            // 0 = let playback pick a short default
     float seamCorrelation = 1.0f; // similarity of the two crossfaded spans, 0..1
+    bool full = false;            // the whole sample: its tail blends back into its head (offered as "Full")
     bool confident = true;        // passed the strict checks; false = a good-enough loop from the relaxed pass (offered, not on by default)
 };
 
@@ -27,4 +28,8 @@ namespace LoopFinder
     // Chooses the crossfade and measures the seam of a loop whose points are
     // fixed already (e.g. markers stored in the WAV file).
     void fitSeam(const std::vector<float>& audio, LoopRegion& loop);
+
+    // The Full loop: the whole sample repeats and its last crossfade blends softly back into its first one.
+    // start sits one crossfade in, so the span before it is the sample's own head. Empty when too short.
+    bool fullLoop(const std::vector<float>& audio, LoopRegion& loop);
 }

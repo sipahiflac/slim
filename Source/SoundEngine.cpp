@@ -393,6 +393,7 @@ juce::var SoundEngine::getInstrumentEditorData(int instrumentIndex) const
         auto* loop = new juce::DynamicObject();
         loop->setProperty("start", region.start / denominator);
         loop->setProperty("end", region.end / denominator);
+        loop->setProperty("full", region.full);
         loops.add(juce::var(loop));
     }
     result->setProperty("loops", juce::var(loops));
@@ -613,7 +614,8 @@ juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
     generated.loopRegions = prepared.loopRegions;
     // A loop that passed the strict checks is on from the start; one that is only good enough stays offered but Off.
     generated.selectedLoop = std::make_shared<std::atomic<int>>(
-        prepared.oneShot || prepared.loopRegions.empty() || !prepared.loopRegions.front().confident ? 0 : 1);
+        prepared.preferFull && !prepared.loopRegions.empty() && prepared.loopRegions.back().full ? (int)prepared.loopRegions.size()
+        : prepared.oneShot || prepared.loopRegions.empty() || !prepared.loopRegions.front().confident ? 0 : 1);
     generated.loopStart = prepared.loopStart;
     generated.loopEnd = prepared.oneShot ? 0 : prepared.loopEnd;
     generated.defaultParams = { 10, 1, 3, 5, 1, 10, 5 };

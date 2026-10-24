@@ -145,9 +145,10 @@ void writeGeneratedWav(const juce::File& file, const std::vector<float>& samples
 
 PreparedGeneratedSample ToneCard::prepareGeneratedSample(const juce::MemoryBlock& audioData,
                                                          const juce::String& prompt,
-                                                         bool forceUnpitched, bool saveFiles, bool expectPitch)
+                                                         bool forceUnpitched, bool saveFiles, bool expectPitch, bool fullLoop)
 {
     PreparedGeneratedSample result;
+    result.preferFull = fullLoop;
     result.prompt = prompt.trim();
     const auto created = juce::Time::getCurrentTime();
     result.generatedAt = created.toISO8601(true);
@@ -173,7 +174,8 @@ PreparedGeneratedSample ToneCard::prepareGeneratedSample(const juce::MemoryBlock
     for (size_t i = 0; i < fadeIn; ++i)
         result.processed[i] *= (float)i / (float)std::max((size_t)1, fadeIn);
 
-    const size_t fadeOut = std::min((size_t)std::lround(0.075 * kEngineSampleRate), result.processed.size() / 2);
+    // A sound made to loop keeps its last samples: the loop blends them into its head instead of fading to silence.
+    const size_t fadeOut = fullLoop ? 0 : std::min((size_t)std::lround(0.075 * kEngineSampleRate), result.processed.size() / 2);
     constexpr double floorGain = 0.0001;
     for (size_t i = 0; i < fadeOut; ++i)
     {
@@ -253,6 +255,9 @@ void ToneCard::analyseGeneratedPlayback(PreparedGeneratedSample& sample)
         sample.loopStart = sample.loopRegions.front().start;
         sample.loopEnd = sample.loopRegions.front().end;
     }
+    // Full is always the last choice, so a saved selection index keeps pointing at it.
+    LoopRegion full;
+    if (LoopFinder::fullLoop(sample.processed, full)) sample.loopRegions.push_back(full);
 
     // Analysis never writes into or truncates the waveform. Peak calibration
     // remains a whole-file operation and loop seams are rendered at playback.

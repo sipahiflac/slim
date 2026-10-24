@@ -10,6 +10,7 @@ struct GenerationOptions
     double durationSeconds = 5.0; // sound length, 1-10 s
     float influence = -1.0f;      // prompt_influence 0-1; negative means the built-in default
     bool loop = false;            // ask ElevenLabs for a smoothly looping sound
+    bool enhance = true;          // let the server rewrite the prompt before it reaches the sound model
 
     static GenerationOptions fromVar(const juce::var& value)
     {
@@ -18,6 +19,7 @@ struct GenerationOptions
         if (value.hasProperty("duration")) result.durationSeconds = juce::jlimit(1.0, 10.0, (double) value["duration"]);
         if (value.hasProperty("influence")) result.influence = juce::jlimit(0.0f, 1.0f, (float) value["influence"]);
         result.loop = value.hasProperty("loop") && (bool) value["loop"];
+        result.enhance = !value.hasProperty("enhance") || (bool) value["enhance"];
         return result;
     }
 };
@@ -30,7 +32,7 @@ public:
     static juce::var submitFeedback(const juce::String& installationId,
                                     const juce::String& messageId, int choice);
     static juce::MemoryBlock generate(const juce::String& text, float influence, juce::String& error,
-                                      const GenerationOptions& options = {});
+                                      const GenerationOptions& options = {}, juce::String* soundKind = nullptr);
     // Asks the server whether a newer build is published: { ok, newer, current, latest, notes }. The download page is
     // kept here (never handed to the page), so openUpdatePage() can only open a checked scrapbrainaudio.com link.
     static juce::var checkForUpdate();

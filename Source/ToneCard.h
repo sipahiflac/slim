@@ -82,6 +82,7 @@ struct PreparedGeneratedSample
     float rootCents = 0.0f;
     float pitchConfidence = 0.0f;
     bool oneShot = true;
+    bool preferFull = false; // asked for as a loop: the Full loop is on from the start
     int loopStart = 0;
     int loopEnd = 0;
     std::vector<LoopRegion> loopRegions;
@@ -106,7 +107,7 @@ struct ToneCard
     static PreparedGeneratedSample prepareGeneratedSample(const juce::MemoryBlock& audioData,
                                                           const juce::String& prompt,
                                                           bool forceUnpitched = false, bool saveFiles = true,
-                                                          bool expectPitch = false);
+                                                          bool expectPitch = false, bool fullLoop = false);
     static void analyseGeneratedPlayback(PreparedGeneratedSample& sample);
     static void saveGeneratedSampleFiles(const PreparedGeneratedSample& sample, float exactRootNote);
 

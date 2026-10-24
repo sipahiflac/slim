@@ -332,8 +332,17 @@ float Voice::renderSample(bool movementEnabled)
             const auto region = currentInstrument->loopRegions[(size_t)selected - 1];
             lStart = region.start;
             lEnd = region.end;
-            const int wanted = region.crossfade > 0 ? region.crossfade
-                                                    : (int)(0.012f * kEngineSampleRateF);
+            int wanted = region.crossfade > 0 ? region.crossfade
+                                              : (int)(0.012f * kEngineSampleRateF);
+            if (region.full)
+            {
+                // Full follows the trim markers: the lap is exactly the part that plays, and its last stretch
+                // blends back into its first one.
+                wanted = std::clamp((playEnd - playStart) / 8, (int)(0.04f * kEngineSampleRateF),
+                                    (int)(0.15f * kEngineSampleRateF));
+                lStart = playStart + wanted;
+                lEnd = playEnd;
+            }
             // The blend reads the span just before lStart, which a trimmed
             // playback start may have cut into.
             crossfade = std::min({ wanted, (lEnd - lStart) / 2, lStart - playStart });

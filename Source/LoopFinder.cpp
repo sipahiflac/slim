@@ -358,6 +358,20 @@ void fitSeam(const std::vector<float>& audio, LoopRegion& loop)
     loop.seamCorrelation = (float)seamCorrelation(audio, loop.start, loop.end, loop.crossfade);
 }
 
+bool fullLoop(const std::vector<float>& audio, LoopRegion& loop)
+{
+    const int count = (int)audio.size();
+    if (count < samplesFor(0.4)) return false;
+    loop = LoopRegion();
+    loop.crossfade = std::clamp(count / 8, samplesFor(0.04), samplesFor(0.15));
+    loop.start = loop.crossfade;
+    loop.end = count;
+    loop.full = true;
+    loop.confident = false; // offered, never switched on by the analysis (a sound asked for as a loop turns it on)
+    loop.seamCorrelation = (float)seamCorrelation(audio, loop.start, loop.end, loop.crossfade);
+    return true;
+}
+
 // How demanding a pass is. The strict pass offers only loops that cannot be heard. The relaxed pass exists for
 // short sounds: loops are off by default and the user turns one on by choice, so a good-enough loop is worth
 // having; it still has a floor (nothing under 0.35 s of sound, nothing under 0.15 s of loop).
@@ -369,6 +383,9 @@ struct Tuning
 };
 constexpr Tuning kStrict { 1.0, 0.8, 0.030, 0.45, 0.5, 2.0, true, 0.9, 1.5, 9.0, 6.0, 1.0, 0.75, 0.35, 1.0, 0.75 };
 constexpr Tuning kRelaxed { 0.35, 0.22, 0.020, 0.5, 0.15, 1.2, false, 1.4, 3.5, 16.0, 14.0, 3.0, 0.55, 0.7, 2.5, 0.55 };
+// Last resort for sounds the two passes above reject (the owner found loops almost never turned up): short and
+// uneven material still gets a loop to try. Always offered Off.
+constexpr Tuning kLoose { 0.25, 0.15, 0.015, 0.5, 0.10, 1.0, false, 2.2, 6.0, 30.0, 24.0, 6.0, 0.35, 1.2, 4.0, 0.35 };
 
 std::vector<LoopRegion> findLoopsWith(const std::vector<float>& audio, int maxLoops, const Tuning& t)
 {
@@ -564,6 +581,11 @@ std::vector<LoopRegion> findLoops(const std::vector<float>& audio, int maxLoops)
     if (loops.empty())
     {
         loops = findLoopsWith(audio, maxLoops, kRelaxed);
+        for (auto& loop : loops) loop.confident = false;
+    }
+    if (loops.empty())
+    {
+        loops = findLoopsWith(audio, maxLoops, kLoose);
         for (auto& loop : loops) loop.confident = false;
     }
     return loops;
