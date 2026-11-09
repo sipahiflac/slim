@@ -324,6 +324,8 @@ juce::var SoundEngine::getInstrumentLibrary() const
         item->setProperty("uploaded", instrument.uploaded);
         item->setProperty("draft", instrument.importDraft);
         item->setProperty("editable", instrument.processedFile.isNotEmpty() || instrument.importDraft);
+        if (instrument.thumbnail.isNotEmpty()) item->setProperty("thumb", instrument.thumbnail);
+        if (instrument.tag.isNotEmpty()) item->setProperty("tag", instrument.tag);
         instruments.add(juce::var(item));
     }
     auto* library = new juce::DynamicObject();
@@ -448,6 +450,30 @@ juce::var SoundEngine::setInstrumentLoop(int instrumentIndex, int selection)
     return juce::var(result);
 }
 
+// The picture and the kind of a sound. Message thread; the audio thread never reads them. Only what is sent changes.
+juce::var SoundEngine::setInstrumentMeta(int instrumentIndex, const juce::var& meta)
+{
+    auto* result = new juce::DynamicObject();
+    if (instrumentIndex < 0 || instrumentIndex >= (int)toneCard.instruments.size() || !meta.isObject())
+    {
+        result->setProperty("ok", false);
+        return juce::var(result);
+    }
+    auto& instrument = toneCard.instruments[(size_t)instrumentIndex];
+    if (meta.hasProperty("thumb"))
+    {
+        const auto thumb = meta["thumb"].toString();
+        if (thumb.isEmpty() || (thumb.length() == 38 * 22 && thumb.containsOnly("012"))) instrument.thumbnail = thumb;
+    }
+    if (meta.hasProperty("tag"))
+    {
+        const auto tag = meta["tag"].toString();
+        if (tag.length() <= 16 && tag.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) instrument.tag = tag;
+    }
+    result->setProperty("ok", true);
+    return juce::var(result);
+}
+
 juce::String SoundEngine::getInstrumentSettingsPath(int instrumentIndex) const
 {
     if (instrumentIndex < 0 || instrumentIndex >= (int)toneCard.instruments.size()) return {};
@@ -466,6 +492,8 @@ juce::String SoundEngine::getInstrumentSettingsJson(int instrumentIndex) const
     auto* object = new juce::DynamicObject();
     object->setProperty("version", 2);
     object->setProperty("name", instrument.name);
+    if (instrument.thumbnail.isNotEmpty()) object->setProperty("thumb", instrument.thumbnail);
+    if (instrument.tag.isNotEmpty()) object->setProperty("tag", instrument.tag);
     object->setProperty("brightness", params.brightness);
     object->setProperty("attack", params.attack);
     object->setProperty("release", params.release);
@@ -737,7 +765,7 @@ juce::var SoundEngine::renameInstrument(int instrumentIndex, const juce::String&
         clean += character;
         lastSpace = space;
     }
-    clean = clean.trim().substring(0, 28).trim();
+    clean = clean.trim().substring(0, 48).trim();
     if (clean.isEmpty())
     {
         result->setProperty("error", "Name is empty");

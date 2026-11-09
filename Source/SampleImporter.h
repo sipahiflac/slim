@@ -32,6 +32,7 @@ public:
     SampleImporter(Mutation edit, std::function<void()> changed) : mutate(std::move(edit)), notify(std::move(changed)) {}
     ~SampleImporter() override {
         if (draft < 0 || busy) return;
+        dropRival();
         // Closing the editor or the app (or the host dropping the plug-in) with an unsaved sound saves it: the work
         // is never lost just because "Save" was not pressed.
         PreparedGeneratedSample sample;
@@ -87,6 +88,68 @@ public:
         if ((bool)result["ok"]) { draft = (int)result["index"]; notify(); }
         return result;
     }
+    // ---- Camera: one photo at a time, held here until a generation uses it -------------------------------------
+    // The bytes that will be sent are exactly the file (JPEG, PNG, GIF or WebP up to 3.5 MB). Only a bigger photo is
+    // scaled down (long edge 1568 px, the most the model reads) and re-saved as a high-quality JPEG so it fits.
+    // The page gets the same bytes back to draw its own old-camera version; that copy never leaves the page.
+    void choosePhoto(Done done) {
+        if (busy) { done(error("Busy")); return; }
+        chooser = std::make_unique<juce::FileChooser>("Choose a photo", juce::File(), "*.jpg;*.jpeg;*.png;*.gif;*.webp");
+        juce::Component::SafePointer<SampleImporter> safe(this);
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+            [safe, done](const juce::FileChooser& picker) mutable {
+                if (!safe) return;
+                const auto file = picker.getResult();
+                if (!file.existsAsFile()) { auto result = error("Cancelled"); result.getDynamicObject()->setProperty("cancelled", true); done(result); return; }
+                if (file.getSize() > 30 * 1024 * 1024) { done(error("Photo too large (30 MB)")); return; }
+                safe->startPhoto(file.getFileName(), {}, file, std::move(done));
+            });
+    }
+    void dropPhoto(const juce::String& name, const juce::String& encoded, Done done) {
+        if (busy) { done(error("Busy")); return; }
+        if (encoded.length() > 42 * 1024 * 1024) { done(error("Photo too large (30 MB)")); return; }
+        startPhoto(name, encoded, {}, std::move(done));
+    }
+    bool hasPhoto() const { return photoBytes.getSize() > 0; }
+    const juce::MemoryBlock& photo() const { return photoBytes; }
+    const juce::String& photoType() const { return photoMime; }
+    // A generation answers with two takes of the same words. Both are installed as drafts so either can be played from
+    // the keys; `draft` is the one being heard, `rival` the other. Keeping one (finish(true)) or neither (finish(false))
+    // removes the rival first, so the single-draft rules below still hold.
+    juce::var installPair(PreparedGeneratedSample a, PreparedGeneratedSample b) {
+        if (busy || draft >= 0) return error("Save or discard first");
+        a.importDraft = b.importDraft = true;
+        juce::var first, second;
+        first = mutate([&](SoundEngine& engine) {
+            previous = engine.getSelectedInstrument();
+            return engine.installGeneratedSample(std::move(a));
+        });
+        if (!(bool)first["ok"]) return first;
+        second = mutate([&](SoundEngine& engine) { return engine.installGeneratedSample(std::move(b)); });
+        if (!(bool)second["ok"]) {
+            mutate([&](SoundEngine& engine) { engine.deleteGeneratedSample((int)first["index"]); engine.selectVoice(previous); return juce::var(); });
+            return second;
+        }
+        draft = (int)first["index"]; rival = (int)second["index"]; current = 0;
+        audition(0);
+        notify();
+        auto* result = new juce::DynamicObject();
+        result->setProperty("ok", true); result->setProperty("pair", true);
+        result->setProperty("index", draft); result->setProperty("current", 0);
+        result->setProperty("variants", juce::var(juce::Array<juce::var>{ first, second }));
+        return juce::var(result);
+    }
+    // Switches the take the keys play (0 = A, 1 = B).
+    juce::var audition(int which) {
+        if (rival < 0 || (which != 0 && which != 1)) return error("No pair");
+        if (which != current) { std::swap(draft, rival); current = which; }
+        return mutate([&](SoundEngine& engine) {
+            engine.allNotesOff(); engine.selectVoice(draft);
+            auto* result = new juce::DynamicObject();
+            result->setProperty("ok", true); result->setProperty("index", draft); result->setProperty("current", current);
+            return juce::var(result);
+        });
+    }
     void choose(Done done) {
         if (busy || draft >= 0) { done(error("Save or discard first")); return; }
         chooser = std::make_unique<juce::FileChooser>("Import sound", juce::File(), "*.wav;*.aif;*.aiff;*.flac;*.mp3");
@@ -107,6 +170,7 @@ public:
     }
     void finish(bool save, Done done) {
         if (busy || draft < 0) { done(error("No pending sample")); return; }
+        dropRival(); // of a pair, only the take being heard goes on
         if (!save) {
             auto result = mutate([this](SoundEngine& engine) {
                 auto removed = engine.deleteGeneratedSample(draft);
@@ -144,6 +208,67 @@ public:
         })) { busy = false; done(error("Engine busy")); }
     }
 private:
+    void dropRival() {
+        if (rival < 0) return;
+        const int gone = rival;
+        rival = -1; current = 0;
+        mutate([&](SoundEngine& engine) { engine.deleteGeneratedSample(gone); return juce::var(); });
+        if (gone < draft) --draft; // the take that stays slid down one place
+    }
+    static juce::String sniffImageType(const juce::MemoryBlock& data) {
+        const auto* b = static_cast<const unsigned char*>(data.getData());
+        const auto n = data.getSize();
+        if (n >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF) return "image/jpeg";
+        if (n >= 4 && b[0] == 0x89 && b[1] == 'P' && b[2] == 'N' && b[3] == 'G') return "image/png";
+        if (n >= 4 && b[0] == 'G' && b[1] == 'I' && b[2] == 'F' && b[3] == '8') return "image/gif";
+        if (n >= 12 && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F' && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') return "image/webp";
+        return {};
+    }
+    void startPhoto(juce::String name, juce::String encoded, juce::File file, Done done) {
+        busy = true;
+        juce::Component::SafePointer<SampleImporter> safe(this);
+        if (!juce::Thread::launch([safe, name, encoded, file, done]() mutable {
+            constexpr size_t maxSent = 3670016; // 3.5 MB: with base64 still under the 5 MB the model accepts
+            juce::MemoryBlock data;
+            bool read = false;
+            if (file.existsAsFile()) read = file.loadFileAsData(data);
+            else { juce::MemoryOutputStream stream; read = juce::Base64::convertFromBase64(stream, encoded); data = stream.getMemoryBlock(); }
+            juce::String failure, mime = read ? sniffImageType(data) : juce::String();
+            if (!read) failure = "Cannot read photo";
+            else if (mime.isEmpty()) failure = "Use a JPG, PNG, GIF or WebP";
+            else if (data.getSize() > maxSent) {
+                // Too big to send as it is: scale the long edge down to 1568 px and keep the quality high.
+                auto image = juce::ImageFileFormat::loadFrom(data.getData(), data.getSize());
+                if (!image.isValid()) failure = "Photo too large";
+                else {
+                    const int longEdge = std::max(image.getWidth(), image.getHeight());
+                    if (longEdge > 1568) {
+                        const float scale = 1568.0f / (float) longEdge;
+                        image = image.rescaled(std::max(1, juce::roundToInt(image.getWidth() * scale)),
+                                               std::max(1, juce::roundToInt(image.getHeight() * scale)), juce::Graphics::highResamplingQuality);
+                    }
+                    for (float quality : { 0.95f, 0.88f, 0.8f }) {
+                        juce::MemoryOutputStream out; juce::JPEGImageFormat jpeg; jpeg.setQuality(quality);
+                        if (!jpeg.writeImageToStream(image, out)) continue;
+                        if (out.getDataSize() <= maxSent) { data = out.getMemoryBlock(); mime = "image/jpeg"; failure = {}; break; }
+                        failure = "Photo too large";
+                    }
+                    if (data.getSize() > maxSent) failure = "Photo too large";
+                }
+            }
+            juce::String encodedBack = failure.isEmpty() ? juce::Base64::toBase64(data.getData(), data.getSize()) : juce::String();
+            juce::MessageManager::callAsync([safe, name, data = std::move(data), mime, failure, encodedBack = std::move(encodedBack), done]() mutable {
+                if (!safe) return;
+                safe->busy = false;
+                if (failure.isNotEmpty()) { done(error(failure)); return; }
+                safe->photoBytes = std::move(data); safe->photoMime = mime;
+                auto* result = new juce::DynamicObject();
+                result->setProperty("ok", true); result->setProperty("name", name);
+                result->setProperty("mime", mime); result->setProperty("data", encodedBack);
+                done(juce::var(result));
+            });
+        })) { busy = false; done(error("Engine busy")); }
+    }
     void start(juce::String name, juce::String encoded, juce::File file, Done done) {
         busy = true;
         juce::Component::SafePointer<SampleImporter> safe(this);
@@ -186,4 +311,6 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
     bool busy = false;
     int draft = -1, previous = 0;
+    int rival = -1, current = 0; // the other take of a pair, and which of A/B `draft` is
+    juce::MemoryBlock photoBytes; juce::String photoMime; // the Camera screen's photo, as it will be sent
 };

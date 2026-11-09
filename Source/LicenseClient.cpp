@@ -275,6 +275,36 @@ juce::var LicenseClient::submitFeedback(const juce::String& installationId,
     return juce::var(success);
 }
 
+juce::var LicenseClient::categorize(const juce::StringArray& names)
+{
+    const auto service = endpoint();
+    if (service.isEmpty() || names.isEmpty() || names.size() > 40) return reply("invalid");
+    const auto code = readStoredCode(service);
+    if (code.isEmpty()) return reply("inactive");
+    juce::Array<juce::var> list;
+    for (const auto& name : names) list.add(name.substring(0, 80));
+    auto* body = new juce::DynamicObject();
+    body->setProperty("licenseCode", code);
+    body->setProperty("deviceId", deviceId());
+    body->setProperty("names", list);
+    const auto target = service.upToLastOccurrenceOf("/", true, false) + "melodragon-categorize";
+    int status = 0;
+    juce::MemoryBlock response;
+    const auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+        .withHttpRequestCmd("POST")
+        .withExtraHeaders("Content-Type: application/json\r\nAccept: application/json\r\n")
+        .withConnectionTimeoutMs(20000).withNumRedirectsToFollow(0).withStatusCode(&status);
+    if (auto stream = juce::URL(target).withPOSTData(juce::JSON::toString(juce::var(body))).createInputStream(options))
+        stream->readIntoMemoryBlock(response, 16384);
+    if (status != 200) return reply("offline");
+    const auto result = juce::JSON::parse(juce::String::fromUTF8((const char*)response.getData(), (int)response.getSize()));
+    if (!result.isObject() || !(bool)result["ok"] || !result["tags"].isArray()) return reply("offline");
+    auto* success = new juce::DynamicObject();
+    success->setProperty("ok", true);
+    success->setProperty("tags", result["tags"]);
+    return juce::var(success);
+}
+
 // The server authorizes every generation. Developer privileges never come from this client.
 juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influence, juce::String& error,
                                           const GenerationOptions& tuning, juce::String* soundKind)
@@ -312,6 +342,79 @@ juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influe
     else if (soundKind != nullptr)
         *soundKind = responseHeaders.getValue("x-sound-kind", {}); // what the server's rewrite decided this sound is
     return audio;
+}
+
+void LicenseClient::generateVariants(const juce::String& text, float influence, juce::String& error,
+                                     std::vector<juce::MemoryBlock>& audio, std::vector<juce::String>& kinds,
+                                     const GenerationOptions& tuning, const juce::MemoryBlock* photo,
+                                     const juce::String& photoType, std::vector<juce::String>* captions)
+{
+    audio.clear(); kinds.clear();
+    if (captions != nullptr) captions->clear();
+    constexpr size_t maxResponse = 28 * 1024 * 1024; // two sounds, base64, each under the server's 10 MB cap
+    juce::MemoryBlock response;
+    juce::StringPairArray responseHeaders;
+    const auto service = endpoint();
+    if (service.isEmpty()) { error = "License service not configured"; return; }
+    const auto code = readStoredCode(service);
+    if (code.isEmpty()) { error = "Activate a license first"; return; }
+    auto* body = new juce::DynamicObject();
+    body->setProperty("licenseCode", code); body->setProperty("text", text);
+    body->setProperty("deviceId", deviceId());
+    body->setProperty("requestId", juce::Uuid().toDashedString()); body->setProperty("promptInfluence", influence);
+    body->setProperty("durationSeconds", tuning.durationSeconds); body->setProperty("loop", tuning.loop); body->setProperty("enhance", tuning.enhance);
+    body->setProperty("variants", 2);
+    if (photo != nullptr && photo->getSize() > 0)
+    {
+        body->setProperty("image", juce::Base64::toBase64(photo->getData(), photo->getSize()));
+        body->setProperty("imageType", photoType);
+    }
+    const auto target = service.upToLastOccurrenceOf("/", true, false) + "melodragon-generate";
+    int status = 0;
+    auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+        .withHttpRequestCmd("POST").withExtraHeaders("Content-Type: application/json\r\nAccept: application/json, audio/mpeg\r\n")
+        .withConnectionTimeoutMs(90000).withNumRedirectsToFollow(0).withStatusCode(&status)
+        .withResponseHeaders(&responseHeaders);
+    if (auto stream = juce::URL(target).withPOSTData(juce::JSON::toString(juce::var(body))).createInputStream(options))
+        stream->readIntoMemoryBlock(response, (size_t)maxResponse + 1);
+
+    auto fail = [&](const juce::var& failure) {
+        error = status == 402 ? "No credits" : status == 401 ? "Check your license" : status == 429 ? "Try again later"
+              : status == 428 ? "Device identification required"
+              : status == 409 && failure["error"].toString() == "device_conflict" ? "Free code already linked"
+              : status == 409 ? "Generation already running" : "Generation failed - try again";
+    };
+    const auto asJson = [&] {
+        return juce::JSON::parse(juce::String::fromUTF8((const char*)response.getData(), (int)std::min<size_t>(response.getSize(), maxResponse)));
+    };
+    if (status != 200 || response.getSize() == 0 || response.getSize() > maxResponse)
+    {
+        fail(status == 409 && response.getSize() <= 4096 ? asJson() : juce::var());
+        return;
+    }
+    // The JSON answer starts with '{'; an mp3 never does (ID3 tag or frame sync), whatever case the headers came in.
+    if (*static_cast<const char*>(response.getData()) != '{')
+    {
+        // A server that does not know photos would have made a sound out of the word "photo": refuse that one.
+        if (photo != nullptr) { error = "Photo sounds are not available yet"; return; }
+        // An older server: one sound, same credit as always.
+        audio.push_back(std::move(response));
+        kinds.push_back(responseHeaders.getValue("x-sound-kind", {}));
+        return;
+    }
+    const auto parsed = asJson();
+    const auto* list = parsed["variants"].getArray();
+    if (!(bool)parsed["ok"] || list == nullptr || list->isEmpty()) { error = "Generation failed - try again"; return; }
+    for (const auto& entry : *list)
+    {
+        juce::MemoryOutputStream decoded;
+        if (!juce::Base64::convertFromBase64(decoded, entry["audio"].toString()) || decoded.getDataSize() == 0
+            || decoded.getDataSize() > 10000000) continue;
+        audio.push_back(decoded.getMemoryBlock());
+        kinds.push_back(entry["kind"].toString());
+        if (captions != nullptr) captions->push_back(entry["caption"].toString());
+    }
+    if (audio.empty()) error = "Generation failed - try again";
 }
 
 namespace

@@ -11,8 +11,15 @@ window.addEventListener('wheel', e => {
     if(e.ctrlKey)e.preventDefault();
     else if(e.deltaY||e.deltaX)wakeBacklight();
 }, { passive: false });
+let devChords = false;
 window.addEventListener('keydown', e => {
-    // Release build: the developer chords (Ctrl+Shift+E/D/F/M/B, demo macros, F12 screenshots) are not wired.
+    // Release build: the developer chords are only wired when the standalone was started with SCRAPBRAIN_DEV=1
+    // (see devChords below). Ctrl+Shift+D demo mode, Ctrl+Shift+B boot replay, Ctrl+1..5 demo macros.
+    if (devChords && e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (e.shiftKey && e.code === 'KeyD') { e.preventDefault(); e.stopImmediatePropagation(); requestDemoToggle(); return; }
+        if (e.shiftKey && e.code === 'KeyB' && demoMode) { e.preventDefault(); e.stopImmediatePropagation(); replayDemoBoot(); return; }
+        if (!e.shiftKey && demoMode && /^Digit[1-5]$/.test(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); playDemoMacro(Number(e.code.slice(5)) - 1); return; }
+    }
     if ((e.ctrlKey || e.metaKey) && ['+', '-', '=', '0', 'r', 'R'].includes(e.key)) e.preventDefault();
     if (e.key === 'F12') { e.preventDefault(); e.stopImmediatePropagation(); return; } // no WebView dev tools
     if (e.key === 'F5') e.preventDefault();
@@ -453,6 +460,62 @@ ICONS.IconRoute=iconRows([
     '................................',
     '................................',
 ]);
+
+// Camera: an isometric (2:1) camera in the same sprite shades as the other menu icons (b top, a front, d side, c
+// light edges, # ink). Built from boxes, so every edge is a clean 2:1 pixel line: a body, a viewfinder hump and a
+// shutter button on top, a flash window and a lens barrel on the big face.
+ICONS.IconCamera=(()=>{
+    const N=32,grid=Array.from({length:N},()=>Array(N).fill(0));
+    const cx=12,cy=15,TOP=7,FRONT=6,SIDE=1,LIGHT=8;
+    const project=(x,y,z)=>[cx+x-y,cy+(x+y)/2-z];
+    const inside=(points,px,py)=>{
+        let signs=0;
+        for(let i=0;i<points.length;i++){
+            const a=points[i],b=points[(i+1)%points.length];
+            const cross=(b[0]-a[0])*(py-a[1])-(b[1]-a[1])*(px-a[0]);
+            if(cross>0)signs|=1;else if(cross<0)signs|=2;
+        }
+        return signs!==3;
+    };
+    const face=(points,value)=>{for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(inside(points,x+0.5,y+0.5))grid[y][x]=value;};
+    const box=(x0,y0,z0,x1,y1,z1)=>{
+        face([project(x1,y0,z0),project(x1,y1,z0),project(x1,y1,z1),project(x1,y0,z1)],SIDE);
+        face([project(x0,y1,z0),project(x1,y1,z0),project(x1,y1,z1),project(x0,y1,z1)],FRONT);
+        face([project(x0,y0,z1),project(x1,y0,z1),project(x1,y1,z1),project(x0,y1,z1)],TOP);
+    };
+    const WIDTH=18,DEPTH=8,HEIGHT=11;
+    box(0,0,0,WIDTH,DEPTH,HEIGHT);
+    box(2,2,HEIGHT,8,6,HEIGHT+2);
+    box(12,3,HEIGHT,15,5,HEIGHT+1);
+    const flat=grid.map(row=>row.slice());
+    for(let y=0;y<N-1;y++)for(let x=0;x<N;x++)if(flat[y][x]===TOP&&flat[y+1][x]===FRONT)grid[y][x]=LIGHT; // lit top-front edge
+    // Flash window: a light patch on the big face (face coordinates u across, v up).
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+        if(flat[y][x]!==FRONT)continue;
+        const u=x+0.5-cx+DEPTH,v=cy+(u+DEPTH)/2-(y+0.5);
+        if(u>=12.5&&u<=16&&v>=7.2&&v<=9.2)grid[y][x]=LIGHT;
+    }
+    // Lens: a short barrel standing out of the big face. Looking down the barrel from the front: a light rim, an
+    // ink ring, the glass; the barrel's own side is the dark side shade.
+    const LENS_DEPTH=3,lensU=8,lensV=5.4,lensR=5.2;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+        for(let plane=DEPTH+LENS_DEPTH;plane>=DEPTH-0.001;plane-=0.5){
+            const u=x+0.5-cx+plane,v=cy+(u+plane)/2-(y+0.5),r=Math.hypot(u-lensU,v-lensV);
+            if(r>lensR)continue;
+            grid[y][x]=plane>=DEPTH+LENS_DEPTH-0.001?(r>4.2?LIGHT:r>3.4?1:r>1.7?FRONT:1):SIDE;
+            break;
+        }
+    }
+    const glint=project(lensU-1.6,DEPTH+LENS_DEPTH,lensV+1.9);
+    grid[Math.round(glint[1]-0.5)][Math.round(glint[0]-0.5)]=LIGHT;
+    // Centre the sprite: shift it so its bounding box sits in the middle of the 32 x 32 cell.
+    let minX=N,maxX=-1,minY=N,maxY=-1;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(grid[y][x]){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
+    const shiftX=Math.round((N-(maxX-minX+1))/2)-minX,shiftY=Math.round((N-(maxY-minY+1))/2)-minY;
+    const centred=Array.from({length:N},()=>Array(N).fill(0));
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(grid[y][x])centred[y+shiftY][x+shiftX]=grid[y][x];
+    return centred;
+})();
 
 // Revised supplied preset pixels; sheet-wide shadow is generated separately.
 ICONS.IconTones=iconRows([
@@ -981,7 +1044,7 @@ setInterval(()=>{
     }).catch(()=>{}).finally(()=>{noteGatePollBusy=false;});
 },100);
 
-const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37,UPDATE:38};
+const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37,UPDATE:38,AI_COMPARE:39,PHOTO:40,PHOTO_SCAN:41};
 // A plug-in always renders through its DAW; only standalone owns an output device.
 const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 
@@ -1149,11 +1212,140 @@ const voiceCategories = ['Generated','Uploaded'];
 let instrumentCategories = [];
 let instrumentGenerated = [];
 let selectedCategoryIndex = 0;
+// Generated sounds are sorted into folders by kind (Keys, Strings, Winds ...). The kind is guessed on the spot from the
+// name with the rules below, and the server's small language model re-files every name it has not seen yet in the
+// background (categorizeSounds); its answer is kept in localStorage, keyed by the name.
+const SOUND_TAGS=['Keys','Strings','Winds','Voice','Perc','Synth','FX','Ambient','Other'];
+const SOUND_TAG_RULES=[
+    ['Voice',/\b(voice|vocal|sing|choir|choral|scream|shout|whisper|speech|speak|human|baby|babies|child|laugh|cry|throat)/],
+    ['Ambient',/\b(ambient|atmospher|atmoshpher|drone|humming|\bhum\b|rain|ocean|sea\b|forest|night|cinematic|texture|soundscape|room tone|wind\b|bosphorus|cave|space)/],
+    ['FX',/\b(effect|explosion|laser|whoosh|riser|impact|siren|vibrat|phone|engine|glitch|noise|sweep|zap|steam|ferry|boat|ship|train|door|footstep|thunder|fire|motor|robot|sfx)/],
+    ['Synth',/\b(synth|theremin|lead\b|pad\b|saw\b|square\b|arp\b|bleep|beep|8-bit|chiptune|moog|oscillator)/],
+    ['Perc',/\b(drum|snare|kick|hat\b|hats\b|cymbal|clap|tom\b|toms\b|bell|gong|tambourine|shaker|conga|bongo|hit\b|knock|click|tap\b|touch|clink|cowbell|woodblock|percussion|triangle|chime|crash|glass|wine)/],
+    ['Keys',/\b(piano|keys?\b|keyboard|organ|rhodes|wurli|harpsichord|clav|celesta|glockenspiel|marimba|vibraphone|xylophone|music box|kalimba|accordion|harmonium|harmonica|mellotron)/],
+    ['Strings',/\b(guitar|banjo|violin|viola|cello|bass\b|harp\b|mandolin|ukulele|sitar|oud\b|saz\b|bouzouki|lute|dombra|string|plucked|bowed|fiddle|zither|kanun|qanun|santur|balalaika|koto|pizzicato)/],
+    ['Winds',/\b(flute|ney\b|whistl|sax|clarinet|oboe|bassoon|horn|trumpet|trombone|tuba|brass|bagpipe|pipe|recorder|ocarina|didgeridoo|kaval|duduk|zurna|shakuhachi|bamboo|reed|breath)/],
+];
+function guessSoundTag(name) {
+    const text=String(name).toLowerCase();
+    for(const [tag,rule] of SOUND_TAG_RULES)if(rule.test(text))return tag;
+    return 'Other';
+}
+let soundTagStore=(()=>{try{const value=JSON.parse(localStorage.getItem('soundTags2G')||'{}');return value&&typeof value==='object'?value:{};}catch(_){return {};}})();
+function saveSoundTags(){try{localStorage.setItem('soundTags2G',JSON.stringify(soundTagStore));}catch(_){}}
+function soundTagOf(name){if(photoThumbs[name])return 'Photos';const entry=soundTagStore[name];return entry&&SOUND_TAGS.includes(entry[0])?entry[0]:guessSoundTag(name);}
+let selectedTag='All',tagKick={dir:0,start:-1e9},titleMorph={label:null,from:0,to:0,start:0,shown:0};
+const categorizeTried=new Set();let categorizeTimer=0;
+// A sound made from a photo keeps a small thumbnail (38 x 22, three tones, ordered dither). It is stored natively in the
+// sound's own .2g.json (setSoundMeta), so the standalone and the plug-in share it, and comes back with the library
+// (item.thumb / item.tag). Having one is what files a sound under Photos. photoThumbs is the by-name view of it;
+// pendingThumbs holds thumbnails not yet written (and, once, the ones the first version kept in localStorage).
+const THUMB_W=38,THUMB_H=22;
+let pendingThumbs=(()=>{try{const value=JSON.parse(localStorage.getItem('photoThumbs2G')||'{}');return value&&typeof value==='object'?value:{};}catch(_){return {};}})();
+let photoThumbs={...pendingThumbs},instrumentMeta=[];
+function rebuildSoundMeta(entries) {
+    const thumbs={};
+    instrumentMeta=entries.map(item=>({thumb:typeof item.thumb==='string'?item.thumb:'',tag:typeof item.tag==='string'?item.tag:''}));
+    entries.forEach(item=>{
+        const name=String(item.name);
+        if(typeof item.thumb==='string'&&item.thumb)thumbs[name]=item.thumb;
+        if(typeof item.tag==='string'&&SOUND_TAGS.includes(item.tag))soundTagStore[name]=[item.tag,1];
+    });
+    for(const name of Object.keys(pendingThumbs))if(!thumbs[name])thumbs[name]=pendingThumbs[name];
+    photoThumbs=thumbs;
+}
+// Writes what the page knows but the sounds do not yet (new thumbnails, kinds the language model decided, and what the
+// first version kept in localStorage) into the sounds' own files.
+let syncingSoundMeta=false,syncSoundMetaAgain=false;
+async function syncSoundMeta() {
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('setSoundMeta');if(!fn)return;
+    if(syncingSoundMeta){syncSoundMetaAgain=true;return;}
+    syncingSoundMeta=true;
+    try{
+        do{
+            syncSoundMetaAgain=false;
+            for(let i=0;i<instrumentList.length;i++){
+                const name=instrumentList[i],meta=instrumentMeta[i]||(instrumentMeta[i]={thumb:'',tag:''}),change={};
+                if(pendingThumbs[name]&&!meta.thumb)change.thumb=pendingThumbs[name];
+                const entry=soundTagStore[name];
+                if(entry&&entry[1]&&!meta.tag&&!pendingThumbs[name]&&!meta.thumb&&soundCategoryOf(i)==='Generated')change.tag=entry[0];
+                if(!change.thumb&&!change.tag)continue;
+                const result=unwrapNativeResult(await fn(i,change));
+                if(result.ok)Object.assign(meta,change);
+            }
+        }while(syncSoundMetaAgain);
+        // A thumbnail is finished with once every sound of that name carries it; ones for sounds that are gone are dropped.
+        if(instrumentList.length)for(const name of Object.keys(pendingThumbs)){
+            const at=instrumentList.map((n,i)=>n===name?i:-1).filter(i=>i>=0);
+            if(!at.length||at.every(i=>instrumentMeta[i]?.thumb))delete pendingThumbs[name];
+        }
+        if(!Object.keys(pendingThumbs).length)try{localStorage.removeItem('photoThumbs2G');}catch(_){}
+    }catch(_){}
+    finally{syncingSoundMeta=false;}
+}
+function makePhotoThumb(tones) {
+    const cropH=Math.round(PHOTO_W*THUMB_H/THUMB_W),top=Math.floor((PHOTO_H-cropH)/2);
+    let out='';
+    for(let ty=0;ty<THUMB_H;ty++)for(let tx=0;tx<THUMB_W;tx++){
+        const x0=Math.floor(tx*PHOTO_W/THUMB_W),x1=Math.max(x0+1,Math.floor((tx+1)*PHOTO_W/THUMB_W));
+        const y0=top+Math.floor(ty*cropH/THUMB_H),y1=Math.max(y0+1,top+Math.floor((ty+1)*cropH/THUMB_H));
+        let dark=0,n=0;
+        for(let y=y0;y<y1;y++)for(let x=x0;x<x1;x++){const t=tones[y*PHOTO_W+x];dark+=t===1?1:t===2?0.5:0;n++;}
+        const level=Math.floor(dark/n*2+(BAYER4[ty&3][tx&3]+0.5)/16);
+        out+=level<=0?'0':level===1?'2':'1';
+    }
+    return out;
+}
+function soundCategoryOf(index) {
+    return (instrumentCategories[index]||'Generated')==='Uploaded'?'Uploaded':'Generated';
+}
+// Newest sounds first (the engine lists them oldest first).
+function categoryBaseIndices() {
+    return instrumentList.map((_,i)=>i).filter(i => soundCategoryOf(i) === voiceCategories[selectedCategoryIndex]).reverse();
+}
+function currentTabs() {
+    if(voiceCategories[selectedCategoryIndex]!=='Generated')return ['All'];
+    const present=new Set(categoryBaseIndices().map(i=>soundTagOf(instrumentList[i])));
+    return ['All',...SOUND_TAGS.filter(tag=>present.has(tag)),...(present.has('Photos')?['Photos']:[])];
+}
 function categoryVoiceIndices() {
-    return instrumentList.map((_,i)=>i).filter(i => (instrumentCategories[i] || 'Generated') === voiceCategories[selectedCategoryIndex]);
+    const base=categoryBaseIndices();
+    if(voiceCategories[selectedCategoryIndex]!=='Generated')return base;
+    if(!currentTabs().includes(selectedTag))selectedTag='All';
+    return selectedTag==='All'?base:base.filter(i=>soundTagOf(instrumentList[i])===selectedTag);
 }
 function currentCategoryRows() {
     return categoryVoiceIndices().map(i=>({index:i,name:instrumentList[i]}));
+}
+function setTag(index,direction) {
+    const tabs=currentTabs(),at=Math.max(0,tabs.indexOf(selectedTag));
+    if(index<0||index>=tabs.length||index===at)return;
+    selectedTag=tabs[index];
+    tagKick={dir:direction,start:performance.now(),from:at,to:index};
+    const rows=categoryVoiceIndices();
+    if(rows.length&&!rows.includes(selectedVoiceIndex)){selectedVoiceIndex=rows[0];emitJuce('previewVoice',{index:selectedVoiceIndex});}
+    listScrollTop=0;render();
+}
+function cycleTag(direction) {
+    const tabs=currentTabs();if(tabs.length<2)return;
+    const at=Math.max(0,tabs.indexOf(selectedTag));
+    setTag((at+direction+tabs.length)%tabs.length,direction);
+}
+function scheduleCategorize(){clearTimeout(categorizeTimer);categorizeTimer=setTimeout(categorizeSounds,1500);}
+async function categorizeSounds() {
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('categorizeSounds');if(!fn)return;
+    const names=[...new Set(instrumentList.filter((name,i)=>soundCategoryOf(i)==='Generated'&&!photoThumbs[name]
+        &&!(soundTagStore[name]&&soundTagStore[name][1])&&!categorizeTried.has(name)))];
+    for(let i=0;i<names.length;i+=40){
+        const batch=names.slice(i,i+40);batch.forEach(name=>categorizeTried.add(name));
+        try{
+            const result=unwrapNativeResult(await fn(batch));
+            if(!result.ok||!Array.isArray(result.tags))continue;
+            batch.forEach((name,k)=>{if(SOUND_TAGS.includes(result.tags[k]))soundTagStore[name]=[result.tags[k],1];});
+            saveSoundTags();syncSoundMeta();
+        }catch(_){}
+    }
+    if(currentState===ScreenState.VOICES_LIST)render();
 }
 function activeVoiceIndex() { return selectedVoiceIndex; }
 function stepCategoryVoice(direction) {
@@ -1188,6 +1380,7 @@ let editCommitPending=false, pendingEditorControls=null;
 const MENU_PAGES = [
     {title:'Voices',icon:ICONS.IconTones},
     {title:'Neural Synthesis',kind:'ai',icon:ICONS.IconAiSample},
+    {title:'Capture',icon:ICONS.IconCamera},
     {title:'Messages',icon:ICONS.IconMessages},
     {title:'Games',icon:ICONS.IconGames},
     {title:'Settings',icon:ICONS.IconSettings}
@@ -1514,7 +1707,7 @@ function activateLicenseCode(){
         const result=unwrapNativeResult(raw);
         if(result.status==='active')setLicenseData(result);
         else licenseInputMessage=licenseStatusLabel(result.status);
-        currentState=result.status==='active'?(licenseInputReturn===ScreenState.AI_LICENSE?ScreenState.AI_PROMPT:ScreenState.LICENSE_STATUS):ScreenState.LICENSE_INPUT;
+        currentState=result.status==='active'?(licenseInputReturn===ScreenState.AI_LICENSE?(photoAfterLicense?ScreenState.PHOTO:ScreenState.AI_PROMPT):ScreenState.LICENSE_STATUS):ScreenState.LICENSE_INPUT;
         if(currentState!==ScreenState.LICENSE_INPUT)licenseCodeInput.value='';
         else setTimeout(()=>{if(currentState===ScreenState.LICENSE_INPUT)licenseCodeInput.focus();},0);
         render();if(currentState===ScreenState.AI_PROMPT)focusAiPrompt();
@@ -1608,7 +1801,7 @@ function renderAiOptions(){
 // Only when the server says no code is saved; before its first answer (or offline) the prompt opens as usual.
 function licenseNeedsCode(){return !demoMode&&licenseChecked&&licenseData.status==='unlicensed';}
 function openNeuralSynthesis(){
-    aiError='';
+    aiError='';photoAfterLicense=false;
     if(licenseNeedsCode()){currentState=ScreenState.AI_LICENSE;render();return;}
     currentState=ScreenState.AI_PROMPT;render();focusAiPrompt();
 }
@@ -1624,9 +1817,9 @@ aiPromptInput.addEventListener('blur',()=>setTimeout(()=>{if(currentState===Scre
 window.addEventListener('focus',()=>{if(currentState===ScreenState.AI_PROMPT)focusAiPrompt();else if(currentState===ScreenState.DEMO_MACRO)promptField.focus();});
 // ---- renaming a generated or uploaded sound -------------------------------------------------
 const nameInput=document.getElementById('sample-name-input');
-function cleanSampleName(value){return String(value).replace(/[\u0000-\u001f\u007f]+/g,' ').slice(0,28);}
+function cleanSampleName(value){return String(value).replace(/[\u0000-\u001f\u007f]+/g,' ').slice(0,48);}
 let renameError='';
-const nameField=new LcdTextField(nameInput,{maxLength:28,multiline:true,normalize:cleanSampleName,onChange:()=>{renameError='';render();}});
+const nameField=new LcdTextField(nameInput,{maxLength:48,multiline:true,normalize:cleanSampleName,onChange:()=>{renameError='';render();}});
 function activeTextField(){
     return currentState===ScreenState.AI_PROMPT||currentState===ScreenState.DEMO_MACRO?promptField
         :currentState===ScreenState.LICENSE_INPUT?licenseField
@@ -1644,7 +1837,11 @@ function saveRename(){
     const name=nameInput.value.replace(/\s+/g,' ').trim();
     if(!name){renameError='Name is empty';render();return;}
     const fn=window.__JUCE__?.backend?.getNativeFunction?.('renameInstrument');
-    const done=finalName=>{instrumentList[selectedVoiceIndex]=finalName;leaveRename();};
+    const done=finalName=>{
+        const old=instrumentList[selectedVoiceIndex];
+        if(photoThumbs[old]&&old!==finalName){photoThumbs[finalName]=photoThumbs[old];delete photoThumbs[old];}
+        instrumentList[selectedVoiceIndex]=finalName;leaveRename();
+    };
     if(!fn){done(name);return;} // browser preview: rename in memory only
     fn(selectedVoiceIndex,name).then(raw=>{
         const result=unwrapNativeResult(raw);
@@ -1705,6 +1902,17 @@ function replayDemoBoot(){
     try{sessionStorage.setItem('2g.demo-replay',demoBackground);}catch(_){return;}
     location.reload();
 }
+// The native side says whether the standalone was started with SCRAPBRAIN_DEV=1. Only then are the chords live, and
+// the native shortcut watcher's toggleDemoMode event (WebView2 can swallow Ctrl+Shift+D) is listened to.
+window.addEventListener('phoneReady',()=>{
+    const ask=window.__JUCE__?.backend?.getNativeFunction?.('devChordsEnabled');
+    if(!ask)return;
+    ask().then(result=>{
+        if((Array.isArray(result)?result[0]:result)!==true)return;
+        devChords=true;
+        window.__JUCE__.backend.addEventListener('toggleDemoMode',requestDemoToggle);
+    }).catch(()=>{});
+},{once:true});
 window.addEventListener('phoneReady',()=>{
     let background=null;
     try{background=sessionStorage.getItem('2g.demo-replay');sessionStorage.removeItem('2g.demo-replay');}catch(_){}
@@ -1783,7 +1991,7 @@ function demoSimilarity(a,b){
 }
 // Index of the user's own sound (Generated or Uploaded) whose name is closest to what was typed; -1 if none.
 function findDemoSound(typed){
-    const full=demoNormalize(typed),clipped=demoNormalize(String(typed).slice(0,28));
+    const full=demoNormalize(typed),clipped=demoNormalize(String(typed).slice(0,48));
     let best=-1,bestScore=-1;
     instrumentList.forEach((name,index)=>{
         if(!instrumentGenerated[index])return;
@@ -1827,6 +2035,7 @@ function extractInstruments(raw) {
         const entries=list.instruments;
         instrumentCategories=entries.map(item=>item.uploaded||item.category==='Uploaded'?'Uploaded':'Generated');
         instrumentGenerated=entries.map(item=>!!item.editable||!!item.generated||!!item.uploaded);
+        rebuildSoundMeta(entries);
         selectedCategoryIndex=Math.min(selectedCategoryIndex,Math.max(0,voiceCategories.length-1));
         return entries.map(item=>String(item.name));
     }
@@ -1848,8 +2057,10 @@ function applyInstrumentLibrary(raw) {
     const library=Array.isArray(raw)&&raw.length===1&&raw[0]?.instruments?raw[0]:raw;
     const previous=selectedVoiceIndex;
     selectedVoiceIndex=Math.max(0,Math.min(Number.isInteger(library?.selectedIndex)?library.selectedIndex:selectedVoiceIndex,Math.max(0,instrumentList.length-1)));
-    if(Number.isInteger(library?.selectedIndex))selectedCategoryIndex=Math.max(0,voiceCategories.indexOf(instrumentCategories[selectedVoiceIndex]));
+    if(Number.isInteger(library?.selectedIndex))selectedCategoryIndex=Math.max(0,voiceCategories.indexOf(soundCategoryOf(selectedVoiceIndex)));
     if(previous!==selectedVoiceIndex&&[ScreenState.EDIT_VOICE,ScreenState.ROOT_TUNE].includes(currentState))loadEditValues();
+    syncSoundMeta();
+    scheduleCategorize();
     render();
     return true;
 }
@@ -1879,7 +2090,9 @@ function getColor(toneIdx) {
     return pal.bg;
 }
 
+let handsetMarqueeLive=false,handsetMarqueeKey='',handsetMarqueeSince=0;
 function clearScreen() {
+    handsetMarqueeLive=false;
     ctx.fillStyle = getColor(0);
     ctx.fillRect(0, 0, 96, 73);
 }
@@ -2030,12 +2243,13 @@ function drawPhoneStatus() {
     drawString(93-measureString(time,FONTS.Regular),2,time,FONTS.Regular,1);
 
 }
-function drawListTitle(title) {
-    const x=Math.floor((96-measureString(title,FONTS.Regular))/2);
-    const width=measureString(title,FONTS.Regular);
+function drawListTitle(title,ruleWidth=null) {
+    // ruleWidth lets the two rules close in on (or open out from) the title while it changes.
+    const width=measureString(title,FONTS.Regular),x=Math.floor((96-width)/2);
+    const gap=ruleWidth===null?width:ruleWidth,gx=Math.floor((96-gap)/2);
     drawString(x,LCD_LAYOUT.headerTextY,title,FONTS.Regular,1);
-    drawHLine(2,LCD_LAYOUT.headerRuleY,x-4,1);
-    drawHLine(x+width+2,LCD_LAYOUT.headerRuleY,92-x-width,1);
+    drawHLine(2,LCD_LAYOUT.headerRuleY,gx-4,1);
+    drawHLine(gx+gap+2,LCD_LAYOUT.headerRuleY,92-gx-gap,1);
 }
 function fitText(text,width,font=FONTS.Softkey) {
     let result=text;
@@ -2131,8 +2345,8 @@ function chooseLcdListRow(index){
 }
 
 // Shared handset list geometry: five rows, regular text, fixed softkeys.
-function renderHandsetList(title,rows,selected,left='Select',right='Back',emptyLabel='Empty') {
-    clearScreen();drawListTitle(fitText(title,80,FONTS.Regular));
+function renderHandsetList(title,rows,selected,left='Select',right='Back',emptyLabel='Empty',ruleWidth=null) {
+    clearScreen();drawListTitle(fitText(title,80,FONTS.Regular),ruleWidth);
     const maxVisibleRows=5,start=Math.max(0,selected-(maxVisibleRows-1)),visibleRows=rows.slice(start,start+maxVisibleRows);
     const rowHeight=LCD_LAYOUT.listRowHeight;
     const rowsTop=LCD_LAYOUT.listTop;
@@ -2140,7 +2354,17 @@ function renderHandsetList(title,rows,selected,left='Select',right='Back',emptyL
     visibleRows.forEach((label,row)=>{
         const active=start+row===selected,y=rowsTop+1+row*rowHeight;
         if(active){ctx.fillStyle=getColor(1);ctx.fillRect(4,y-1,88,9);}
-        drawString(6,y,fitTextWithEllipsis(String(label),84,FONTS.Regular),FONTS.Regular,active?0:1);
+        const text=String(label),overflow=measureString(text,FONTS.Regular)-84;
+        if(active&&overflow>0){
+            // A long name slides left to its end, rests, and starts over, like a phone's list.
+            const now=performance.now(),key=selected+'|'+text;
+            if(key!==handsetMarqueeKey){handsetMarqueeKey=key;handsetMarqueeSince=now;}
+            const pause=900,travel=overflow/24*1000,cycle=pause+travel+pause,t=(now-handsetMarqueeSince)%cycle;
+            const offset=t<pause?0:t<pause+travel?Math.round((t-pause)/1000*24):overflow;
+            ctx.save();ctx.beginPath();ctx.rect(5,y-1,86,9);ctx.clip();
+            drawString(6-offset,y,text,FONTS.Regular,0);
+            ctx.restore();handsetMarqueeLive=true;
+        }else drawString(6,y,fitTextWithEllipsis(text,84,FONTS.Regular),FONTS.Regular,active?0:1);
         addLcdTarget(4,y-1,88,10,()=>chooseLcdListRow(start+row));
     });
     if(rows.length>maxVisibleRows)drawLcdSlider(93,rowsTop,maxVisibleRows*rowHeight-1,selected/(rows.length-1));
@@ -2149,13 +2373,13 @@ function renderHandsetList(title,rows,selected,left='Select',right='Back',emptyL
 function renderChoiceCards(title,labels,selectedIndex,drawPreview,choose,left='Select'){
     clearScreen();drawListTitle(title);
     labels.forEach((label,index)=>{
-        const x=4,y=11+index*26,w=88,h=23,selected=index===selectedIndex;
+        const compact=labels.length>2,x=4,y=11+index*(compact?17:26),w=88,h=compact?15:23,selected=index===selectedIndex;
         const ink=selected?0:1;
         ctx.fillStyle=getColor(selected?1:2);ctx.fillRect(x,y,w,h);
         if(!selected){ctx.fillStyle=getColor(0);ctx.fillRect(x+1,y+1,w-2,h-2);}
         ctx.fillStyle=getColor(ink);
-        drawPreview(index,y,ink,selected);
-        drawString(34,y+8,label,FONTS.Regular,ink);
+        drawPreview(index,compact?y-4:y,ink,selected);
+        drawString(34,y+(compact?4:8),label,FONTS.Regular,ink);
         addLcdTarget(x,y,w,h,()=>choose(index));
     });
     drawSoftkeys(left,'Back');
@@ -2723,6 +2947,514 @@ function renderAiResult() {
     drawSoftkeys(importDraft?'Edit':'Tune','Back');
 }
 
+// A generation comes back as two takes of the same words (plain caption / alternate caption). Both are engine drafts,
+// so the keys play whichever take is highlighted; the tick marks the one that will be kept, the other is discarded.
+let aiPair=null;
+const COMPARE_CHECK=["......#",".....##","#...##.","##.##..",".###...","..#...."];
+function startAiPair(result) {
+    const takes=(result.variants||[]).map(take=>({
+        index:Number(take.index)||0,duration:Number(take.duration)||0,pitched:!!take.pitched,
+        min:Array.isArray(take.waveformMin)?take.waveformMin.map(Number):[],
+        max:Array.isArray(take.waveformMax)?take.waveformMax.map(Number):[],
+    }));
+    aiPair=takes.length===2?{takes,current:0}:null;
+    return aiPair;
+}
+function selectAiTake(which) {
+    if(!aiPair||importBusy||which===aiPair.current||which<0||which>1)return;
+    aiPair.current=which;selectedVoiceIndex=aiPair.takes[which].index;
+    window.__JUCE__?.backend?.getNativeFunction?.('auditionTake')?.(which)?.catch?.(()=>{});
+    render();
+}
+function drawCompareFrame(x,y,w,h,toneIdx) {
+    ctx.fillStyle=getColor(toneIdx);
+    ctx.fillRect(x,y,w,1);ctx.fillRect(x,y+h-1,w,1);ctx.fillRect(x,y,1,h);ctx.fillRect(x+w-1,y,1,h);
+}
+// 7 x 9 pixel capitals for the two tabs, and the filled symmetric waveform the sample editor uses.
+const COMPARE_LETTERS=[
+    ["..###..",".#...#.","#.....#","#.....#","#######","#.....#","#.....#","#.....#","#.....#"],
+    ["######.","#.....#","#.....#","#.....#","######.","#.....#","#.....#","#.....#","######."],
+];
+function drawCompareGlyph(rows,x,y,toneIdx) {
+    ctx.fillStyle=getColor(toneIdx);
+    rows.forEach((row,r)=>{for(let c=0;c<row.length;c++)if(row[c]==='#')ctx.fillRect(x+c,y+r,1,1);});
+}
+function drawCompareWave(min,max,x0,width,mid,amplitude,toneIdx) {
+    ctx.fillStyle=getColor(2);ctx.fillRect(x0,mid,width,1);
+    ctx.fillStyle=getColor(toneIdx);
+    for(let column=0;column<width;column++) {
+        const from=Math.floor(column*min.length/width);
+        const to=Math.max(from+1,Math.floor((column+1)*min.length/width));
+        let peak=0;
+        for(let i=from;i<Math.min(to,min.length,max.length);i++)
+            peak=Math.max(peak,Math.abs(Number(min[i])||0),Math.abs(Number(max[i])||0));
+        const half=Math.max(1,Math.round(Math.min(1,peak)*amplitude));
+        ctx.fillRect(x0+column,mid-half,1,half*2+1);
+    }
+}
+// Two stacked panels. A keeps its letter and tick on the left of the waveform, B on the right; the waveform fills the
+// rest edge to edge. There is no way out of this screen except Keep: the paid pair is never dropped by a stray key.
+function renderAiCompare() {
+    clearScreen();
+    if(!aiPair){drawSoftkeys('Keep','');return;}
+    const empty=Array(82).fill(0);
+    aiPair.takes.forEach((take,i)=>{
+        const top=1+i*30,active=i===aiPair.current,right=i===1;
+        const tabX=right?82:1,waveX=right?2:14;
+        drawCompareFrame(1,top,94,29,active?1:2);
+        if(active){ctx.fillStyle=getColor(1);ctx.fillRect(tabX,top,13,29);}
+        drawCompareGlyph(COMPARE_LETTERS[i],tabX+3,top+5,active?0:1);
+        // The tick: a check mark on the take that stays, an empty box on the one that goes.
+        if(active)drawCompareGlyph(COMPARE_CHECK,tabX+3,top+18,0);
+        else drawCompareFrame(tabX+3,top+18,7,7,2);
+        drawCompareWave(take.min.length?take.min:empty,take.max.length?take.max:empty,waveX,80,top+14,12,active?1:2);
+        addLcdTarget(1,top,94,29,()=>selectAiTake(i));
+    });
+    drawSoftkeys('Keep','');
+}
+
+// ---- Camera: a photo becomes an instrument --------------------------------------------------------------------------
+// The player picks (or drops) a photo. The ORIGINAL goes to the server untouched; the page keeps only a second,
+// degraded copy for the LCD, made the way a camera phone of about 2002 would have seen it, and reveals it from the top
+// down while the instrument is being made.
+const PHOTO_W=96,PHOTO_H=62;
+let photoLcd=null,photoCanvas=null,photoCanvasKey='',photoScan=null,photoError='',photoBusy=false,photoAfterLicense=false;
+const BAYER4=[[0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]];
+function openCamera() {
+    aiError='';photoError='';
+    if(licenseNeedsCode()){photoAfterLicense=true;currentState=ScreenState.AI_LICENSE;render();return;}
+    photoAfterLicense=false;currentState=ScreenState.PHOTO;render();
+}
+function readFileBase64(file) {
+    return new Promise((resolve,reject)=>{
+        const reader=new FileReader();
+        reader.onload=()=>resolve(String(reader.result).split(',')[1]);
+        reader.onerror=()=>reject(new Error('Cannot read photo'));
+        reader.readAsDataURL(file);
+    });
+}
+function loadImageFromBase64(data,mime) {
+    return new Promise((resolve,reject)=>{
+        const image=new Image();
+        image.onload=()=>resolve(image);
+        image.onerror=()=>reject(new Error('Cannot open photo'));
+        image.src=`data:${mime};base64,${data}`;
+    });
+}
+// What a first-generation camera phone did to a picture, step by step:
+//  1. Fixed-focus plastic lens and a VGA-class CMOS sensor: soft, contrasty, over-saturated, dark corners.
+//  2. Cheap white balance: a warm, slightly green cast; highlights burn out; noise in every pixel, plus a faint
+//     fixed pattern down the columns.
+//  3. A 160 x 103 working size (the QQVGA of a viewfinder / MMS picture) and 12-bit colour (4 bits a channel).
+//  4. Hard JPEG compression, so the picture fits an MMS: real 8 x 8 blocks and colour bleeding from the encoder.
+//  5. The 96 x 62 monochrome LCD: auto levels, then three tones with an ordered dither.
+// The noise is seeded, so the same photo always looks the same.
+async function retroCameraLcd(image) {
+    const W=160,H=Math.round(W*PHOTO_H/PHOTO_W);
+    const work=document.createElement('canvas');work.width=W;work.height=H;
+    const g=work.getContext('2d',{willReadFrequently:true});
+    const wanted=W/H;let cropW=image.naturalWidth,cropH=cropW/wanted;
+    if(cropH>image.naturalHeight){cropH=image.naturalHeight;cropW=cropH*wanted;}
+    g.imageSmoothingEnabled=true;g.imageSmoothingQuality='high';
+    g.filter='blur(0.6px) contrast(1.35) saturate(1.6) brightness(1.08)';
+    g.drawImage(image,(image.naturalWidth-cropW)/2,(image.naturalHeight-cropH)/2,cropW,cropH,0,0,W,H);
+    g.filter='none';
+    const frame=g.getImageData(0,0,W,H),px=frame.data;
+    let seed=0x2f6e2b1;
+    const random=()=>{seed=(seed+0x6D2B79F5)|0;let t=Math.imul(seed^(seed>>>15),1|seed);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};
+    const columnNoise=Array.from({length:W},()=>(random()-0.5)*7);
+    const level4=value=>Math.round(Math.max(0,Math.min(255,value))/17)*17;
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+        const i=(y*W+x)*4,nx=x/(W-1)*2-1,ny=y/(H-1)*2-1;
+        const vignette=1-0.4*(0.8*nx*nx+ny*ny);
+        const luma=(random()-0.5)*28+columnNoise[x];
+        px[i]=level4((px[i]*1.07*vignette+luma+(random()-0.5)*12)*1.08);
+        px[i+1]=level4((px[i+1]*1.0*vignette+luma)*1.08);
+        px[i+2]=level4((px[i+2]*0.84*vignette+luma+(random()-0.5)*12)*1.08);
+    }
+    g.putImageData(frame,0,0);
+    const blob=await new Promise(resolve=>work.toBlob(resolve,'image/jpeg',0.11));
+    if(!blob)throw new Error('Cannot process photo');
+    const compressed=await createImageBitmap(blob);
+    const lcd=document.createElement('canvas');lcd.width=PHOTO_W;lcd.height=PHOTO_H;
+    const l=lcd.getContext('2d',{willReadFrequently:true});
+    l.imageSmoothingEnabled=true;l.imageSmoothingQuality='medium';
+    l.drawImage(compressed,0,0,W,H,0,0,PHOTO_W,PHOTO_H);compressed.close?.();
+    const small=l.getImageData(0,0,PHOTO_W,PHOTO_H).data,count=PHOTO_W*PHOTO_H;
+    const light=new Float32Array(count);
+    for(let i=0;i<count;i++)light[i]=0.299*small[i*4]+0.587*small[i*4+1]+0.114*small[i*4+2];
+    const sorted=Float32Array.from(light).sort(),low=sorted[Math.floor(count*0.02)],high=sorted[Math.floor(count*0.98)];
+    const span=Math.max(24,high-low),tones=new Uint8Array(count);
+    for(let y=0;y<PHOTO_H;y++)for(let x=0;x<PHOTO_W;x++){
+        const bright=Math.max(0,Math.min(1,(light[y*PHOTO_W+x]-low)/span));
+        const dark=1-Math.pow(bright,0.9),threshold=(BAYER4[y&3][x&3]+0.5)/16;
+        tones[y*PHOTO_W+x]=[0,2,1][Math.min(2,Math.floor(dark*2+threshold))]; // light, mid, ink
+    }
+    return tones;
+}
+// The degraded photo as a ready-made canvas in the current LCD colours (rebuilt only if the palette changes).
+function photoLcdCanvas() {
+    const key=[0,1,2].map(getColor).join('|');
+    if(photoCanvas&&photoCanvasKey===key)return photoCanvas;
+    photoCanvas=document.createElement('canvas');photoCanvas.width=PHOTO_W;photoCanvas.height=PHOTO_H;
+    const c=photoCanvas.getContext('2d');
+    for(let tone=0;tone<=2;tone++){
+        c.fillStyle=getColor(tone);
+        for(let y=0;y<PHOTO_H;y++){
+            let x=0;
+            while(x<PHOTO_W){
+                if(photoLcd[y*PHOTO_W+x]!==tone){x++;continue;}
+                let end=x;while(end<PHOTO_W&&photoLcd[y*PHOTO_W+end]===tone)end++;
+                c.fillRect(x,y,end-x,1);x=end;
+            }
+        }
+    }
+    photoCanvasKey=key;return photoCanvas;
+}
+// Shared by the camera screens: paint a 96 x 62 array of tones (0 = clear) in one go.
+let photoBlitCanvas=null,photoBlitImage=null;
+function hexRgb(color) {
+    const v=color.match(/[0-9a-f]{2}/gi);return v?v.map(n=>parseInt(n,16)):[0,0,0];
+}
+function blitPhotoTones(tones) {
+    if(!photoBlitCanvas){photoBlitCanvas=document.createElement('canvas');photoBlitCanvas.width=PHOTO_W;photoBlitCanvas.height=PHOTO_H;photoBlitImage=photoBlitCanvas.getContext('2d').createImageData(PHOTO_W,PHOTO_H);}
+    const data=photoBlitImage.data,colors=[null,hexRgb(getColor(1)),hexRgb(getColor(2))];
+    for(let i=0;i<tones.length;i++){
+        const c=colors[tones[i]],o=i*4;
+        if(c){data[o]=c[0];data[o+1]=c[1];data[o+2]=c[2];data[o+3]=255;}else data[o+3]=0;
+    }
+    photoBlitCanvas.getContext('2d').putImageData(photoBlitImage,0,0);
+    ctx.drawImage(photoBlitCanvas,0,0);
+}
+// Camera home: a small first-person room, a dark one in the spirit of the first 3D shooters. A raycaster (one ray per
+// screen column, no textures, no sprites except the candle) draws walls, floor and ceiling; a table stands in the middle
+// with a candle on it, and the candle is the only light. Each pixel gets a brightness from that one point light, which an
+// ordered dither turns into the LCD's three tones. Up/Down walk, Left/Right turn (Shift strafes), OK takes the picture.
+const ROOM_SIZE=9,ROOM_PLANE=0.8,ROOM_SCALE=PHOTO_W/(2*ROOM_PLANE);
+const ROOM_TABLE={x:4.5,y:4.5,half:0.42,top:0.34};
+const ROOM_LIGHT={x:4.5,y:4.5,z:0.6};
+// A thin top on four square legs, as boxes (x0,x1,y0,y1 on the floor plan, z0,z1 in height).
+const ROOM_TABLE_BOXES=(()=>{
+    const {x,y,half,top}=ROOM_TABLE,boxes=[{x0:x-half,x1:x+half,y0:y-half,y1:y+half,z0:top-0.05,z1:top,plank:true}];
+    for(const sx of [-1,1])for(const sy of [-1,1]){
+        const cx=x+sx*(half-0.07),cy=y+sy*(half-0.07);
+        boxes.push({x0:cx-0.045,x1:cx+0.045,y0:cy-0.045,y1:cy+0.045,z0:0,z1:top-0.05});
+    }
+    return boxes;
+})();
+let roomX=1.6,roomY=4.5,roomAngle=0,roomLastDraw=0;
+// A short, friendly note the first time Capture is opened (kept per install in localStorage).
+const CAPTURE_NOTICE="Capture makes a sound from a photo. To describe your photo, it is sent to a third-party AI provider. We do not store your photos on our servers and we cannot access them afterwards.";
+let captureNoticeScroll=0;
+let captureNoticeSeen=(()=>{try{return localStorage.getItem('captureNotice2G')==='1';}catch(_){return false;}})();
+const roomBright=new Float32Array(PHOTO_W*PHOTO_H),roomDepthBuffer=new Float32Array(PHOTO_W);
+function roomBlocked(x,y) {
+    const r=0.22;
+    if(x<1+r||y<1+r||x>ROOM_SIZE-1-r||y>ROOM_SIZE-1-r)return true;
+    const h=ROOM_TABLE.half+r;
+    return Math.abs(x-ROOM_TABLE.x)<h&&Math.abs(y-ROOM_TABLE.y)<h;
+}
+function roomMove(dx,dy) {
+    if(!roomBlocked(roomX+dx,roomY))roomX+=dx;
+    if(!roomBlocked(roomX,roomY+dy))roomY+=dy;
+}
+// The room runs at 10 frames a second. A step is three frames; holding a key takes the next step when one lands, and
+// turning while walking keeps walking (keys are tracked while they are held, since the OS repeats only the last key).
+let roomStep=null,roomLastTurn=0,roomShift=false;
+const roomHeld=new Set();
+function roomAct(key) {
+    const dx=Math.cos(roomAngle),dy=Math.sin(roomAngle),step=0.22,turning=key==='ArrowLeft'||key==='ArrowRight';
+    if(turning&&!roomShift){roomAngle+=key==='ArrowRight'?0.15:-0.15;return;}
+    if(roomStep)return;
+    let vx,vy;
+    if(key==='ArrowUp'){vx=dx;vy=dy;}else if(key==='ArrowDown'){vx=-dx;vy=-dy;}
+    else{const sign=key==='ArrowRight'?1:-1;vx=-dy*sign;vy=dx*sign;}
+    roomStep={dx:vx*step,dy:vy*step,start:performance.now(),done:0};
+}
+function roomTick() {
+    const now=performance.now(),canTurn=now-roomLastTurn>=90;
+    for(const key of roomHeld){
+        if((key==='ArrowLeft'||key==='ArrowRight')&&!roomShift){if(!canTurn)continue;roomLastTurn=now;}
+        roomAct(key);
+    }
+}
+window.addEventListener('keyup',e=>{roomHeld.delete(e.key);roomShift=e.shiftKey;});
+window.addEventListener('blur',()=>roomHeld.clear());
+// Brightness a surface point gets from the candle (inverse square, facing factor).
+function roomLight(px,py,pz,nx,ny,nz,power,both) {
+    const dx=ROOM_LIGHT.x-px,dy=ROOM_LIGHT.y-py,dz=ROOM_LIGHT.z-pz,d2=dx*dx+dy*dy+dz*dz;
+    let facing=(dx*nx+dy*ny+dz*nz)/Math.sqrt(d2);
+    if(both)facing=Math.abs(facing);
+    return facing>0?power*facing/((d2+0.3)*(1+0.25*d2)):0;
+}
+function renderPhoto() {
+    clearScreen();
+    const W=PHOTO_W,H=PHOTO_H,S=ROOM_SCALE,now=performance.now();
+    roomLastDraw=now;
+    let dip=0;
+    if(roomStep){
+        const p=Math.min(1,(Math.floor((now-roomStep.start)/100)+1)/3);
+        roomMove(roomStep.dx*(p-roomStep.done),roomStep.dy*(p-roomStep.done));roomStep.done=p;
+        dip=Math.round(1.6*Math.sin(p*Math.PI));
+        if(p>=1)roomStep=null;
+    }
+    const half=H/2-dip;
+    const tick=Math.floor(now/100),power=1.5*(1+0.07*Math.sin(tick*1.7)+0.05*Math.sin(tick*4.3+1.3)+0.03*Math.sin(tick*9.1));
+    const dirX=Math.cos(roomAngle),dirY=Math.sin(roomAngle),plX=-dirY*ROOM_PLANE,plY=dirX*ROOM_PLANE;
+    const T=ROOM_TABLE,bright=roomBright;
+    for(let x=0;x<W;x++){
+        const camX=2*(x+0.5)/W-1,rdx=dirX+plX*camX,rdy=dirY+plY*camX;
+        // Walk the grid to the first wall.
+        let mx=Math.floor(roomX),my=Math.floor(roomY);
+        const ddx=Math.abs(1/(rdx||1e-9)),ddy=Math.abs(1/(rdy||1e-9));
+        const stepX=rdx<0?-1:1,stepY=rdy<0?-1:1;
+        let sideX=(rdx<0?roomX-mx:mx+1-roomX)*ddx,sideY=(rdy<0?roomY-my:my+1-roomY)*ddy,side=0;
+        while(mx>0&&my>0&&mx<ROOM_SIZE-1&&my<ROOM_SIZE-1){
+            if(sideX<sideY){sideX+=ddx;mx+=stepX;side=0;}else{sideY+=ddy;my+=stepY;side=1;}
+        }
+        const perp=Math.max(0.05,side===0?sideX-ddx:sideY-ddy);
+        roomDepthBuffer[x]=perp;
+        const hx=roomX+rdx*perp,hy=roomY+rdy*perp,wallU=side===0?hy:hx;
+        const nx=side===0?-stepX:0,ny=side===1?-stepY:0;
+        const lineH=S/perp,yTop=Math.max(0,Math.ceil(half-lineH/2)),yBottom=Math.min(H-1,Math.floor(half+lineH/2));
+        for(let y=0;y<H;y++){
+            let value;
+            if(y<yTop){            // ceiling
+                const d=0.5*S/(half-(y+0.5)),fx=roomX+rdx*d,fy=roomY+rdy*d;
+                value=roomLight(fx,fy,1,0,0,-1,power)*0.8;
+            }else if(y<=yBottom){  // wall, with brick courses
+                const z=0.5-(y+0.5-half)*perp/S;
+                const course=(z*4)%1,joint=(wallU*3+Math.floor(z*4)*0.5)%1;
+                value=roomLight(hx,hy,z,nx,ny,0,power)*(course<0.09||joint<0.05?0.55:1);
+            }else{                 // floor, in tiles
+                const d=0.5*S/(y+0.5-half),fx=roomX+rdx*d,fy=roomY+rdy*d;
+                value=roomLight(fx,fy,0,0,0,1,power)*(((Math.floor(fx*2)+Math.floor(fy*2))&1)?0.7:1);
+                if(Math.abs(fx-T.x)<T.half&&Math.abs(fy-T.y)<T.half)value*=0.3;   // the table's shadow
+            }
+            bright[y*W+x]=value;
+        }
+        // The table: its boxes found with a ray/box test and painted far to near, so the legs show the floor between them.
+        const inv=1/(rdx||1e-9),inw=1/(rdy||1e-9),hits=[];
+        for(const box of ROOM_TABLE_BOXES){
+            let tx0=(box.x0-roomX)*inv,tx1=(box.x1-roomX)*inv,ty0=(box.y0-roomY)*inw,ty1=(box.y1-roomY)*inw;
+            if(tx0>tx1)[tx0,tx1]=[tx1,tx0];
+            if(ty0>ty1)[ty0,ty1]=[ty1,ty0];
+            const enter=Math.max(tx0,ty0),leave=Math.min(tx1,ty1);
+            if(enter<leave&&enter>0.1&&enter<perp)hits.push({box,enter,leave,alongX:tx0>ty0});
+        }
+        hits.sort((p,q)=>q.enter-p.enter);
+        for(const {box,enter,leave,alongX} of hits){
+            const yTopFar=Math.ceil(half+(0.5-box.z1)*S/leave),yTopNear=Math.ceil(half+(0.5-box.z1)*S/enter);
+            const yBottomNear=Math.min(H-1,Math.floor(half+(0.5-box.z0)*S/enter));
+            for(let y=Math.max(0,yTopFar);y<Math.min(H,yTopNear);y++){   // its top, seen from above
+                const d=(0.5-box.z1)*S/(y+0.5-half),fx=roomX+rdx*d,fy=roomY+rdy*d;
+                bright[y*W+x]=roomLight(fx,fy,box.z1,0,0,1,power)*(box.plank&&(fx*5)%1<0.1?0.6:1);
+            }
+            const fx=roomX+rdx*enter,fy=roomY+rdy*enter,fnx=alongX?(rdx>0?-1:1):0,fny=alongX?0:(rdy>0?-1:1);
+            for(let y=Math.max(0,yTopNear);y<=yBottomNear;y++){          // its side (lit from both ways: the candle is above)
+                const z=0.5-(y+0.5-half)*enter/S;
+                bright[y*W+x]=roomLight(fx,fy,z,fnx,fny,0,power,true)*0.85;
+            }
+        }
+    }
+    // The candle: a taper candle in a small dish, as a billboard on the table top, hidden by walls only.
+    const cdx=ROOM_LIGHT.x-roomX,cdy=ROOM_LIGHT.y-roomY,invDet=1/(plX*dirY-dirX*plY);
+    const depth=invDet*(-plY*cdx+plX*cdy),sideways=invDet*(dirY*cdx-dirX*cdy);
+    if(depth>0.25){
+        const sx=Math.round(W/2*(1+sideways/depth)),unit=S/depth;
+        const yAt=z=>Math.round(half-(z-0.5)*unit);
+        const bodyTop=yAt(T.top+0.22),bodyBottom=yAt(T.top),flameTop=Math.min(bodyTop-4,yAt(T.top+0.22+0.09));
+        const bodyHalf=Math.max(1,Math.round(0.028*unit)),flameHalf=Math.max(1,Math.round(0.024*unit));
+        const dishHalf=bodyHalf+Math.max(1,Math.round(0.03*unit)),flameH=bodyTop-flameTop;
+        const fyc=(flameTop+bodyTop)/2,glow=Math.min(9,Math.max(5,Math.round(0.35*unit)));
+        for(let y=Math.max(0,Math.floor(fyc-glow));y<Math.min(H,Math.ceil(fyc+glow));y++)
+            for(let x=Math.max(0,sx-glow);x<Math.min(W,sx+glow);x++){
+                if(roomDepthBuffer[x]<depth)continue;
+                const r=Math.hypot(x-sx,(y-fyc)*1.3)/glow;
+                if(r<1)bright[y*W+x]+=0.5*(1-r)*(1-r);
+            }
+        const put=(x,y,value)=>{if(x>=0&&x<W&&y>=0&&y<H&&roomDepthBuffer[x]>=depth)bright[y*W+x]=value;};
+        // Dish: a flat disc under the candle, light on top and dark on its rim.
+        for(let x=sx-dishHalf;x<=sx+dishHalf;x++){put(x,bodyBottom,0.2);put(x,bodyBottom-1,Math.abs(x-sx)>dishHalf-1&&dishHalf>2?0.25:0.8);}
+        // Body: shaded across (dark left, light right), a wax drip down the left side.
+        for(let x=sx-bodyHalf;x<=sx+bodyHalf;x++){
+            const shade=x===sx-bodyHalf?0.3:x===sx+bodyHalf?0.95:0.65;
+            for(let y=bodyTop;y<=bodyBottom-2;y++)put(x,y,shade);
+        }
+        for(let y=bodyTop;y<bodyTop+Math.round((bodyBottom-bodyTop)*0.4);y++)put(sx-bodyHalf,y,0.95);
+        put(sx,bodyTop,0);                                           // wick
+        // Flame: a teardrop (fullest low down), light all through with a mid-tone core.
+        for(let y=flameTop;y<bodyTop;y++){
+            const t=(y-flameTop+0.5)/flameH,reach=flameHalf*Math.sin(Math.PI*Math.pow(t,1.5));
+            for(let x=sx-flameHalf;x<=sx+flameHalf;x++){
+                if(Math.abs(x-sx)>reach+0.35)continue;
+                put(x,y,flameHalf>=2&&t>0.55&&Math.abs(x-sx)<=flameHalf*0.34?0.55:4);
+            }
+        }
+        put(sx,flameTop,4);
+    }
+    // Ordered dither to the LCD's tones: ink (dark), mid, and the light background.
+    const tones=new Uint8Array(W*H),map=[1,2,0];
+    for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+        const v=Math.pow(Math.min(1,bright[y*W+x]),0.85);
+        tones[y*W+x]=map[Math.min(2,Math.floor(v*2+(BAYER4[y&3][x&3]+0.5)/16))];
+    }
+    blitPhotoTones(tones);
+    if(photoError){
+        ctx.fillStyle=getColor(0);ctx.fillRect(4,24,88,14);drawCompareFrame(4,24,88,14,1);
+        drawStringCentered(28,fitText(photoError,82,FONTS.Regular),FONTS.Regular,1);
+    }
+    if(!captureNoticeSeen){
+        // A framed note, five lines at a time; Up/Down read on.
+        const lines=wrapBitmapText(CAPTURE_NOTICE,76,40,FONTS.Regular),visible=5,most=Math.max(0,lines.length-visible);
+        captureNoticeScroll=Math.max(0,Math.min(most,captureNoticeScroll));
+        ctx.fillStyle=getColor(0);ctx.fillRect(4,4,88,54);drawCompareFrame(4,4,88,54,1);
+        lines.slice(captureNoticeScroll,captureNoticeScroll+visible).forEach((line,i)=>drawString(8,9+i*9,line,FONTS.Regular,1));
+        if(most>0)drawLcdSlider(88,9,43,captureNoticeScroll/most);
+        drawSoftkeys('OK','Back');
+    }else drawSoftkeys('Capture','Back');
+    addLcdTarget(0,0,96,LCD_LAYOUT.softkeyTop,()=>pressNavigationKey('Enter'));
+}
+
+// ---- Picture arriving ------------------------------------------------------------------------------------------------
+// Passes, each finer than the last, the way a camera phone's picture came together (a progressive JPEG / MMS preview):
+// 8 x 8 blocks (only briefly), 4 x 4 and 2 x 2 (these stay a good while, so the shot can be made out), then the real
+// picture. Each pass is written in interlaced bands, left to right, with no flashing. The pace is set from how long the
+// last sounds took, so the last pass closes about when the sound arrives.
+const PHOTO_TURNS=4,PHOTO_BLOCKS=[8,4,2],PHOTO_PASS_START=[0,0.07,0.42,0.80,1];
+let photoStages=null;
+function photoExpectedMs() {
+    try{const saved=Number(localStorage.getItem('photoGenMs'));if(saved>=3000&&saved<=40000)return saved;}catch(_){}
+    return 8000;
+}
+function photoRememberMs(ms) {
+    try{const old=photoExpectedMs();localStorage.setItem('photoGenMs',String(Math.round(Math.max(3000,Math.min(40000,old*0.5+ms*0.5)))));}catch(_){}
+}
+// Coarse versions of the picture, and for each pass the moment (0 - 1) every point is written.
+function photoScanStages() {
+    if(photoStages&&photoStages.source===photoLcd)return photoStages;
+    const count=PHOTO_W*PHOTO_H,tones=[];
+    for(const size of PHOTO_BLOCKS){
+        const out=new Uint8Array(count);
+        for(let by=0;by<PHOTO_H;by+=size)for(let bx=0;bx<PHOTO_W;bx+=size){
+            let dark=0,n=0;
+            for(let y=by;y<Math.min(PHOTO_H,by+size);y++)for(let x=bx;x<Math.min(PHOTO_W,bx+size);x++){
+                const t=photoLcd[y*PHOTO_W+x];dark+=t===1?1:t===2?0.5:0;n++;
+            }
+            dark/=n;
+            const tone=dark<0.22?0:dark<0.55?2:1;
+            for(let y=by;y<Math.min(PHOTO_H,by+size);y++)for(let x=bx;x<Math.min(PHOTO_W,bx+size);x++)out[y*PHOTO_W+x]=tone;
+        }
+        tones.push(out);
+    }
+    tones.push(photoLcd);
+    const orders=PHOTO_BLOCKS.concat([1]).map(size=>{
+        const order=new Float32Array(count),rows=Math.ceil(PHOTO_H/size),cols=Math.ceil(PHOTO_W/size),half=Math.ceil(rows/2);
+        for(let y=0;y<PHOTO_H;y++)for(let x=0;x<PHOTO_W;x++){
+            const bx=Math.floor(x/size),by=Math.floor(y/size);
+            order[y*PHOTO_W+x]=(by&1)*0.5+0.5*((by>>1)+bx/cols)/half;
+        }
+        return order;
+    });
+    photoStages={source:photoLcd,tones,orders};return photoStages;
+}
+// Passes completed so far (0 - 4): steady while we wait, then a quick finish once the sound is ready.
+function photoScanProgress(now) {
+    if(!photoScan)return 0;
+    if(photoScan.doneAt!==null){
+        const k=Math.min(1,(now-photoScan.doneAt)/photoScan.finishMs);
+        return photoScan.fromP+(PHOTO_TURNS-photoScan.fromP)*k*(2-k);
+    }
+    const seconds=(now-photoScan.start)/1000,expected=photoScan.expect/1000;
+    return seconds<=expected?(PHOTO_TURNS-0.4)*seconds/expected:(PHOTO_TURNS-0.4)+0.3*(1-Math.exp(-(seconds-expected)/4));
+}
+function renderPhotoScan() {
+    clearScreen();
+    if(!photoLcd){drawSoftkeys('','Back');return;}
+    const fraction=Math.min(1,photoScanProgress(performance.now())/PHOTO_TURNS),stages=photoScanStages();
+    let stage=PHOTO_BLOCKS.length;
+    for(let k=0;k<=PHOTO_BLOCKS.length;k++)if(fraction<PHOTO_PASS_START[k+1]){stage=k;break;}
+    const u=(fraction-PHOTO_PASS_START[stage])/(PHOTO_PASS_START[stage+1]-PHOTO_PASS_START[stage]);
+    const current=stages.tones[stage],order=stages.orders[stage],previous=stage>0?stages.tones[stage-1]:null;
+    const tones=new Uint8Array(PHOTO_W*PHOTO_H);
+    for(let i=0;i<tones.length;i++)tones[i]=u>=order[i]?current[i]:previous?previous[i]:0;
+    blitPhotoTones(tones);
+    if(photoError){
+        ctx.fillStyle=getColor(0);ctx.fillRect(4,24,88,14);drawCompareFrame(4,24,88,14,1);
+        drawStringCentered(28,fitText(photoError,82,FONTS.Regular),FONTS.Regular,1);
+    }
+    drawSoftkeys(photoError?'Retry':'','Back');
+}
+async function choosePhoto(file=null) {
+    if(photoBusy)return;
+    if(importDraft){importConfirmRow=0;currentState=ScreenState.IMPORT_CONFIRM;render();return;}
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('loadPhoto');
+    if(!fn){photoError='Engine offline';render();return;}
+    photoBusy=true;photoError='';
+    try{
+        let raw;
+        if(file){
+            if(!/\.(jpe?g|png|gif|webp)$/i.test(file.name))throw new Error('Use a JPG, PNG, GIF or WebP');
+            if(file.size>30*1024*1024)throw new Error('Max 30 MB');
+            raw=await fn(file.name,await readFileBase64(file));
+        }else raw=await fn();
+        const result=unwrapNativeResult(raw);
+        if(result.cancelled)return;
+        if(!result.ok)throw new Error(result.error||'Cannot use that photo');
+        photoLcd=await retroCameraLcd(await loadImageFromBase64(result.data,result.mime));
+        photoCanvas=null;
+        startPhotoGeneration();
+    }catch(error){photoError=error.message||'Cannot use that photo';currentState=ScreenState.PHOTO;}
+    finally{photoBusy=false;render();}
+}
+function startPhotoGeneration() {
+    const backend=window.__JUCE__?.backend,fn=backend?.getNativeFunction?.('generateSoundEffect');
+    if(!fn){photoError='Engine offline';currentState=ScreenState.PHOTO;render();return;}
+    const serial=++aiRequestSerial;photoError='';aiPrompt='photo';
+    photoScan={start:performance.now(),doneAt:null,fromP:0,finishMs:600,expect:photoExpectedMs()};
+    importPreviousVoice=selectedVoiceIndex;importReturnState=ScreenState.PHOTO;
+    currentState=ScreenState.PHOTO_SCAN;render();
+    const options=effectiveGenOptions();
+    fn('photo',{photo:true,duration:options.length,influence:options.match/10,loop:options.loop}).then(async raw=>{
+        const result=unwrapNativeResult(raw);
+        // Left with Back while it was being made: the paid sound is already the engine's pending draft.
+        if(serial!==aiRequestSerial){if(result.ok){importDraft=true;importCategory='Generated';if(result.pair)startAiPair(result);refreshSoundMakerCredits(true);}return;}
+        if(!result.ok&&result.error==='Save or discard first'){importDraft=true;importConfirmRow=0;currentState=ScreenState.IMPORT_CONFIRM;render();return;}
+        if(!result.ok){photoError=String(result.error||'Generation failed');render();return;}
+        photoScan.fromP=photoScanProgress(performance.now());photoScan.doneAt=performance.now();
+        photoScan.finishMs=Math.round(350+380*Math.max(0,PHOTO_TURNS-photoScan.fromP));photoRememberMs(photoScan.doneAt-photoScan.start);
+        importDraft=true;importCategory='Generated';
+        if(result.pair&&startAiPair(result)){
+            selectedVoiceIndex=aiPair.takes[0].index;
+        }else{
+            aiPair=null;
+            aiWaveformMin=Array.isArray(result.waveformMin)?result.waveformMin.map(Number):[];
+            aiWaveformMax=Array.isArray(result.waveformMax)?result.waveformMax.map(Number):[];
+            aiDuration=Number(result.duration)||0;selectedVoiceIndex=Number(result.index)||0;
+            aiRootNote=Number(result.rootNote)||60;aiCents=Number(result.cents)||0;
+            aiPitched=!!result.pitched;aiConfidence=Number(result.confidence)||0;aiUseOriginal=false;
+        }
+        await backend.getNativeFunction('getInstruments')?.().then(applyInstrumentLibrary);
+        if(aiPair)selectedVoiceIndex=aiPair.takes[0].index;
+        aiPrompt=String(instrumentList[selectedVoiceIndex]||'');
+        {   // File the new sound(s) under Photos with a thumbnail of the picture.
+            const thumb=makePhotoThumb(photoLcd);
+            (aiPair?aiPair.takes.map(take=>instrumentList[take.index]):[instrumentList[selectedVoiceIndex]]).filter(Boolean)
+                .forEach(name=>{photoThumbs[name]=thumb;pendingThumbs[name]=thumb;});
+            syncSoundMeta();
+        }
+        refreshSoundMakerCredits(true);
+        // Let the last turn of the beam close before the result takes the screen.
+        const closeMs=photoScan.finishMs+140;
+        setTimeout(()=>{
+            if(serial!==aiRequestSerial)return;
+            photoScan=null;
+            if(aiPair){document.querySelector('.stop-key').setAttribute('aria-label','Keep sound');currentState=ScreenState.AI_COMPARE;render();}
+            else openSampleEditor();
+        },closeMs);
+    }).catch(()=>{if(serial===aiRequestSerial){photoError='Connection timed out';render();}});
+}
+
 const NOTE_NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
 function rootName(){const note=Math.max(0,Math.min(127,Math.round(aiRootNote)));return NOTE_NAMES[note%12]+(Math.floor(note/12)-1);}
 function formatRootNote(){const cents=Math.round(aiCents),sign=cents>=0?'+':'';return `${rootName()} ${sign}${cents} cent`;}
@@ -2766,10 +3498,19 @@ function generateAiSample() {
         const result=unwrapNativeResult(raw);
         // Left with Back while it was being made: the paid sound is already the engine's pending draft, so keep
         // it as one (the next Make asks Save/Discard) instead of leaving a draft that blocks every later sound.
-        if(serial!==aiRequestSerial){if(result.ok){importDraft=true;importCategory='Generated';refreshSoundMakerCredits(true);}return;}
+        if(serial!==aiRequestSerial){if(result.ok){importDraft=true;importCategory='Generated';if(result.pair)startAiPair(result);refreshSoundMakerCredits(true);}return;}
         // A draft the page does not know about (e.g. a reopened plug-in window): offer to save or discard it.
         if(!result.ok&&result.error==='Save or discard first'){importDraft=true;importConfirmRow=0;currentState=ScreenState.IMPORT_CONFIRM;render();return;}
         if(!result.ok){aiError=String(result.error||'Generation failed');render();return;}
+        if(result.pair&&startAiPair(result)){
+            // Two takes: split screen, hear either from the keys, tick one. The first take is the one being heard.
+            aiDuration=aiPair.takes[0].duration;selectedVoiceIndex=aiPair.takes[0].index;
+            importDraft=true;importCategory='Generated';
+            await backend.getNativeFunction('getInstruments')?.().then(applyInstrumentLibrary);
+            selectedVoiceIndex=aiPair.takes[0].index;
+            document.querySelector('.stop-key').setAttribute('aria-label','Keep sound');
+            currentState=ScreenState.AI_COMPARE;render();refreshSoundMakerCredits(true);return;
+        }
         aiWaveformMin=Array.isArray(result.waveformMin)?result.waveformMin.map(Number):[];
         aiWaveformMax=Array.isArray(result.waveformMax)?result.waveformMax.map(Number):[];
         aiDuration=Number(result.duration)||0;
@@ -2809,10 +3550,22 @@ const VOICE_CATEGORY_ICONS=[[
     "..#...........#...",
     "..#...........#...",
     "..#############..."
+],[
+    "..###############.",
+    "..#.............#.",
+    "..#.......##....#.",
+    "..#......####...#.",
+    "..#......####...#.",
+    "..#...+...##....#.",
+    "..#..+++.....#..#.",
+    "..#.+++++...###.#.",
+    "..#+++++++.#####.#",
+    "..###############.",
+    ".................."
 ]];
 function renderVoiceCategories(){
     renderChoiceCards('Voices',voiceCategories,selectedCategoryIndex,(index,y,ink)=>{
-        VOICE_CATEGORY_ICONS[index===0?0:1].forEach((row,r)=>{
+        VOICE_CATEGORY_ICONS[{Generated:0,Uploaded:1,Photos:2}[voiceCategories[index]]??0].forEach((row,r)=>{
             for(let c=0;c<row.length;c++){
                 if(row[c]==='.')continue;
                 ctx.fillStyle=getColor(row[c]==='#'?ink:2);ctx.fillRect(10+c,y+6+r,1,1);
@@ -2820,9 +3573,66 @@ function renderVoiceCategories(){
         });
     },chooseLcdListRow);
 }
+function updateTitleMorph(label,now) {
+    const width=measureString(fitText(label,80,FONTS.Regular),FONTS.Regular);
+    if(titleMorph.label!==label)titleMorph={label,from:titleMorph.label===null?width:titleMorph.shown,to:width,start:now,shown:titleMorph.shown};
+    const step=Math.min(1,(Math.floor((now-titleMorph.start)/60)+1)/4);
+    titleMorph.shown=Math.round(titleMorph.from+(titleMorph.to-titleMorph.from)*step);
+    return step;
+}
+// Photos: four sounds a page in a 2 x 2 grid, each a thumbnail of its picture with the start of its name.
+function renderPhotoGrid() {
+    const now=performance.now(),step=updateTitleMorph('Photos',now);
+    clearScreen();drawListTitle('Photos',titleMorph.shown);
+    const rows=currentCategoryRows(),position=Math.max(0,rows.findIndex(row=>row.index===activeVoiceIndex())),page=Math.floor(position/4);
+    // Each cell: the middle 15 rows of the thumbnail, a 1 px gap, then a 9 px label (text with a pixel of air all round).
+    const shown=15,skip=Math.floor((THUMB_H-shown)/2);
+    for(let slot=0;slot<4;slot++){
+        const i=page*4+slot,row=rows[i];if(!row)continue;
+        const cx=slot%2?49:1,cy=slot<2?11:37,selected=i===position,tx=cx+4,ty=cy,thumb=photoThumbs[row.name];
+        if(thumb)for(let tone=1;tone<=2;tone++){
+            ctx.fillStyle=getColor(tone);
+            const mark=String(tone);
+            for(let y=0;y<shown;y++){
+                let x=0;
+                while(x<THUMB_W){
+                    if(thumb[(y+skip)*THUMB_W+x]!==mark){x++;continue;}
+                    let end=x;while(end<THUMB_W&&thumb[(y+skip)*THUMB_W+end]===mark)end++;
+                    ctx.fillRect(tx+x,ty+y,end-x,1);x=end;
+                }
+            }
+        }
+        ctx.fillStyle=getColor(selected?1:2);
+        ctx.fillRect(tx-1,ty-1,THUMB_W+2,1);ctx.fillRect(tx-1,ty+shown,THUMB_W+2,1);
+        ctx.fillRect(tx-1,ty,1,shown);ctx.fillRect(tx+THUMB_W,ty,1,shown);
+        if(selected){ctx.fillStyle=getColor(1);ctx.fillRect(tx-1,cy+shown+1,THUMB_W+2,9);}
+        drawString(tx+1,cy+shown+2,fitTextWithEllipsis(row.name,THUMB_W-2,FONTS.Regular),FONTS.Regular,selected?0:1);
+        addLcdTarget(tx-1,cy,THUMB_W+2,26,()=>chooseLcdListRow(i));
+    }
+    const kicking=now-tagKick.start<160;
+    drawFolderArrow(now,kicking);
+    handsetMarqueeLive=handsetMarqueeLive||kicking||step<1;
+    drawSoftkeys(rows.length?'Edit':'','Back');
+}
+// One plain arrow on the left edge (the right edge belongs to the scroll bar): left and right both change folder. It
+// gives a small push inwards, and goes dark, while the folder changes.
+function drawFolderArrow(now,kicking) {
+    const midY=LCD_LAYOUT.listTop+22,push=kicking?1:0;
+    ctx.fillStyle=getColor(kicking?1:2);
+    [[0,2,1],[1,1,3],[2,0,5]].forEach(([cx,cy,height])=>ctx.fillRect(push+cx,midY+cy,1,height));
+    addLcdTarget(0,midY-3,4,12,()=>cycleTag(-1));
+}
 function renderVoicesListScreen() {
-    const rows=currentCategoryRows();
-    renderHandsetList(voiceCategories[selectedCategoryIndex] || 'Sounds',rows.map(row=>row.name),Math.max(0,rows.findIndex(row=>row.index===activeVoiceIndex())),'Edit','Back',voicesEmptyLabel());
+    currentCategoryRows();   // settles a folder that no longer exists
+    if(voiceCategories[selectedCategoryIndex]==='Generated'&&selectedTag==='Photos'){renderPhotoGrid();return;}
+    const rows=currentCategoryRows(),tabs=currentTabs(),now=performance.now();
+    const label=tabs.length>1&&selectedTag!=='All'?selectedTag:(voiceCategories[selectedCategoryIndex]||'Sounds');
+    // The rules beside the title close in or open out over four steps when the label changes.
+    const step=updateTitleMorph(label,now);
+    renderHandsetList(label,rows.map(row=>row.name),Math.max(0,rows.findIndex(row=>row.index===activeVoiceIndex())),'Edit','Back',voicesEmptyLabel(),titleMorph.shown);
+    const kicking=now-tagKick.start<160;
+    if(tabs.length>1)drawFolderArrow(now,kicking);
+    handsetMarqueeLive=handsetMarqueeLive||step<1||kicking;
 }
 
 function editorRow(rowIndex) {
@@ -3166,7 +3976,7 @@ document.getElementById('screen-frame').addEventListener('wheel',event=>{
     wakeBacklight();cancelMouseMenuSelection();
     const direction=event.deltaY>0?1:-1;
     if(currentState!==ScreenState.EDIT_VOICE){
-        const menuStates=[ScreenState.MENU,ScreenState.VOICE_CATEGORIES,ScreenState.VOICES_LIST,ScreenState.SETTINGS,ScreenState.AUDIO_OUTPUTS,ScreenState.AI_TUNE,ScreenState.IMPORT_CONFIRM,ScreenState.MESSAGES,ScreenState.MESSAGE_CHOICES,ScreenState.MESSAGE_CHAT,ScreenState.GAMES];
+        const menuStates=[ScreenState.MENU,ScreenState.VOICE_CATEGORIES,ScreenState.VOICES_LIST,ScreenState.SETTINGS,ScreenState.AUDIO_OUTPUTS,ScreenState.AI_TUNE,ScreenState.AI_COMPARE,ScreenState.IMPORT_CONFIRM,ScreenState.MESSAGES,ScreenState.MESSAGE_CHOICES,ScreenState.MESSAGE_CHAT,ScreenState.GAMES];
         if(!menuStates.includes(currentState))return;
         event.preventDefault();
         // Wheel always browses rows, even while a setting is being adjusted.
@@ -3221,6 +4031,9 @@ function renderScreenContent(){
     else if (currentState === ScreenState.AI_OPTIONS) renderAiOptions();
     else if (currentState === ScreenState.AI_GENERATING) renderAiGenerating();
     else if (currentState === ScreenState.AI_RESULT) renderAiResult();
+    else if (currentState === ScreenState.AI_COMPARE) renderAiCompare();
+    else if (currentState === ScreenState.PHOTO) renderPhoto();
+    else if (currentState === ScreenState.PHOTO_SCAN) renderPhotoScan();
     else if (currentState === ScreenState.AI_TUNE) renderAiTune();
     else if (currentState === ScreenState.IMPORT_LOADING) renderImportLoading();
     else if (currentState === ScreenState.IMPORT_CONFIRM) renderImportConfirm();
@@ -3400,6 +4213,33 @@ window.addEventListener('keydown', (e) => {
         }
         return;
     }
+    if(currentState===ScreenState.PHOTO){
+        if(!captureNoticeSeen){
+            if(e.key==='Enter'||e.key===' '){captureNoticeSeen=true;try{localStorage.setItem('captureNotice2G','1');}catch(_){}render();}
+            else if(e.key==='ArrowDown'){captureNoticeScroll++;render();}
+            else if(e.key==='ArrowUp'){captureNoticeScroll--;render();}
+            else if(e.key==='Escape'||e.key==='Backspace'){photoError='';roomHeld.clear();currentState=ScreenState.MENU;render();}
+            e.preventDefault();return;
+        }
+        if(e.key==='Enter'||e.key===' ')choosePhoto();
+        else if(e.key==='Escape'||e.key==='Backspace'){photoError='';roomHeld.clear();currentState=ScreenState.MENU;render();}
+        else if(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown'){
+            roomShift=e.shiftKey;
+            if(e.isTrusted){roomHeld.add(e.key);roomTick();}else roomAct(e.key);   // a phone key press has no key-up: one step
+            render();
+        }
+        e.preventDefault();return;
+    }
+    if(currentState===ScreenState.PHOTO_SCAN){
+        if(photoError){
+            if(e.key==='Enter'||e.key===' ')startPhotoGeneration();
+            else if(e.key==='Escape'||e.key==='Backspace'){++aiRequestSerial;photoError='';photoScan=null;currentState=ScreenState.PHOTO;render();}
+        }else if((e.key==='Escape'||e.key==='Backspace')&&photoScan&&photoScan.doneAt===null){
+            // Leaving early is allowed; a sound that was already paid for is kept as a pending draft (see startPhotoGeneration).
+            ++aiRequestSerial;photoScan=null;currentState=ScreenState.PHOTO;render();
+        }
+        e.preventDefault();return;
+    }
     if(currentState===ScreenState.AI_LICENSE){
         if(e.key==='Enter'||e.key===' ')openLicenseInput(ScreenState.AI_LICENSE);
         else if(e.key==='Escape'||e.key==='Backspace'){currentState=ScreenState.MENU;render();}
@@ -3565,6 +4405,9 @@ window.addEventListener('keydown', (e) => {
         if (e.key==='ArrowUp' || e.key==='ArrowDown') {
             stepCategoryVoice(e.key==='ArrowUp'?-1:1);e.preventDefault();return;
         }
+        if ((e.key==='ArrowLeft' || e.key==='ArrowRight') && voiceCategories[selectedCategoryIndex]==='Generated') {
+            cycleTag(e.key==='ArrowLeft'?-1:1);e.preventDefault();return;
+        }
         if (e.key==='Escape' || e.key==='Backspace') {
             currentState=ScreenState.VOICE_CATEGORIES;render();e.preventDefault();return;
         }
@@ -3627,6 +4470,8 @@ window.addEventListener('keydown', (e) => {
                 render();
             } else if (page.kind === 'ai') {
                 openNeuralSynthesis();
+            } else if (page.title === 'Capture') {
+                openCamera();
             } else if (page.title === 'Messages') {
                 messageReturnState=ScreenState.MENU;messageSelectedIndex=0;
                 currentState=ScreenState.MESSAGES;render();
@@ -3833,6 +4678,99 @@ function playKeySound(name) {
     source.start();
 }
 
+// Tapping the bare plastic case or the wooden board behind it. The case shows a small ring of light under the
+// fingertip; the board gives a few wood chips at the cursor. Everything is
+// drawn on the 2 CSS px art grid, so it stays true pixel art at any size.
+(function(){
+    const gains={plastic:0.7,wood:0.8},touchSounds=new Map();
+    for(const [name,base64] of Object.entries(window.TOUCH_SOUNDS||{})){
+        try{
+            const raw=atob(base64),bytes=new Uint8Array(raw.length);
+            for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);
+            keyAudio.decodeAudioData(bytes.buffer).then(buffer=>touchSounds.set(name,buffer)).catch(()=>{});
+        }catch(_){}
+    }
+    const art=document.getElementById('phone-art'),scene=document.getElementById('device-container');
+    function playTouch(kind){
+        if(phoneSettings.keyVolume===0)return;
+        if(keyAudio.state==='suspended')keyAudio.resume().catch(()=>{});
+        const buffer=touchSounds.get(kind);if(!buffer)return;
+        const source=keyAudio.createBufferSource(),gain=keyAudio.createGain();
+        source.buffer=buffer;source.playbackRate.value=0.96+Math.random()*0.08;
+        gain.gain.value=gains[kind]*Math.pow(phoneSettings.keyVolume/7,2)*(window.getMasterVolumeGain?.()??1);
+        source.connect(gain).connect(keyAudio.destination);
+        source.onended=()=>{source.disconnect();gain.disconnect();};
+        source.start();
+    }
+    // Wood chips: a handful of 1-2 cell flecks thrown up from the cursor, falling on a stepped 30 fps clock.
+    const CHIP_COLORS=['#d9a46a','#c08650','#8f5a2f','#6e4222'];
+    let chips=[],chipCanvas=null,chipFrame=0;
+    function drawChips(){
+        chipFrame=0;
+        const dpr=window.devicePixelRatio||1,w=Math.ceil(innerWidth*dpr),h=Math.ceil(innerHeight*dpr);
+        if(chipCanvas.width!==w||chipCanvas.height!==h){chipCanvas.width=w;chipCanvas.height=h;}
+        const g=chipCanvas.getContext('2d');g.clearRect(0,0,w,h);
+        const rect=scene.getBoundingClientRect(),cell=rect.width/160,now=performance.now();
+        chips=chips.filter(chip=>now-chip.born<chip.life);
+        for(const chip of chips){
+            if(chip.ring){
+                const step=Math.floor((now-chip.born)/45),radius=step+1;
+                g.fillStyle=`rgba(255,255,255,${[0.6,0.42,0.26,0.12][step]||0})`;
+                for(let j=-radius;j<=radius;j++)for(let i=-radius;i<=radius;i++){
+                    if(Math.abs(Math.hypot(i,j)-radius)>0.55)continue;
+                    const rx=Math.round((rect.left+(chip.x+i)*cell)*dpr),ry=Math.round((rect.top+(chip.y+j)*cell)*dpr);
+                    g.fillRect(rx,ry,Math.round(cell*dpr),Math.round(cell*dpr));
+                }
+                continue;
+            }
+            const t=Math.floor((now-chip.born)/33)*0.033;
+            if(t>chip.life/1000-0.12&&Math.floor(t*30)%2)continue;   // blink out at the end
+            const px=Math.round(chip.x+chip.vx*t),py=Math.round(chip.y+chip.vy*t+60*t*t);
+            g.fillStyle=chip.color;
+            const x0=Math.round((rect.left+px*cell)*dpr),y0=Math.round((rect.top+py*cell)*dpr);
+            g.fillRect(x0,y0,Math.round(chip.w*cell*dpr),Math.round(cell*dpr));
+        }
+        if(chips.length)chipFrame=requestAnimationFrame(drawChips);
+        else g.clearRect(0,0,w,h);
+    }
+    function ensureChipCanvas(){
+        if(chipCanvas)return;
+        chipCanvas=document.createElement('canvas');
+        chipCanvas.setAttribute('aria-hidden','true');
+        chipCanvas.style.cssText='position:fixed;left:0;top:0;width:100vw;height:100vh;pointer-events:none;z-index:9000;image-rendering:pixelated';
+        document.body.appendChild(chipCanvas);
+    }
+    // A touch on the case: a small ring of light grows from the fingertip in four steps and fades.
+    function spawnRipple(clientX,clientY){
+        ensureChipCanvas();
+        const rect=scene.getBoundingClientRect(),cell=rect.width/160;
+        chips.push({ring:true,x:Math.round((clientX-rect.left)/cell-0.5),y:Math.round((clientY-rect.top)/cell-0.5),born:performance.now(),life:180});
+        if(!chipFrame)chipFrame=requestAnimationFrame(drawChips);
+    }
+    function spawnChips(clientX,clientY){
+        ensureChipCanvas();
+        const rect=scene.getBoundingClientRect(),cell=rect.width/160,now=performance.now();
+        const ox=(clientX-rect.left)/cell,oy=(clientY-rect.top)/cell;
+        const count=5+Math.floor(Math.random()*3);
+        for(let i=0;i<count;i++){
+            const angle=-Math.PI*(0.12+Math.random()*0.76),speed=14+Math.random()*16;
+            chips.push({x:ox,y:oy,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,w:Math.random()<0.4?2:1,
+                color:CHIP_COLORS[Math.floor(Math.random()*CHIP_COLORS.length)],born:now,life:300+Math.random()*140});
+        }
+        if(!chipFrame)chipFrame=requestAnimationFrame(drawChips);
+    }
+    window.addEventListener('pointerdown',event=>{
+        if(event.button!==0||document.documentElement.classList.contains('booting'))return;
+        if(event.target.closest('#screen-frame,.phone-key,.desk-menu,.master-volume,textarea,input,button,select'))return;
+        const rect=art.getBoundingClientRect();
+        const x=Math.floor((event.clientX-rect.left)*art.width/rect.width),y=Math.floor((event.clientY-rect.top)*art.height/rect.height);
+        let onCase=false;
+        if(x>=0&&y>=0&&x<art.width&&y<art.height){try{onCase=art.getContext('2d').getImageData(x,y,1,1).data[3]>=16;}catch(_){}}
+        if(onCase){playTouch('plastic');spawnRipple(event.clientX,event.clientY);}
+        else{playTouch('wood');spawnChips(event.clientX,event.clientY);}
+    });
+})();
+
 document.querySelectorAll('.phone-key').forEach(button => {
     let heldNote = null;
     let pressedPointer = null;
@@ -3904,6 +4842,9 @@ setInterval(()=>{
 },530);
 setInterval(()=>{
     if(currentState===ScreenState.AI_GENERATING&&!aiError&&!document.hidden)render();
+    else if(currentState===ScreenState.PHOTO_SCAN&&!photoError&&!document.hidden)render();
+    else if(handsetMarqueeLive&&!document.hidden)render();
+    else if(currentState===ScreenState.PHOTO&&!document.hidden&&performance.now()-roomLastDraw>=90){roomTick();render();}   // candle flicker
 },33);
 
 // No asynchronous font dependency.
@@ -3956,7 +4897,7 @@ async function finishSoundImport(save){
     try{
         await flushEditorControls();
         const result=unwrapNativeResult(await fn(save));if(!result.ok)throw new Error(result.error||'Save failed');
-        importDraft=false;selectedVoiceIndex=Number.isInteger(result.index)?result.index:importPreviousVoice;
+        importDraft=false;aiPair=null;selectedVoiceIndex=Number.isInteger(result.index)?result.index:importPreviousVoice;
         document.querySelector('.stop-key').setAttribute('aria-label','Stop sound');
         emitJuce('selectVoice',{index:selectedVoiceIndex});
         await window.__JUCE__?.backend?.getNativeFunction?.('getInstruments')?.().then(applyInstrumentLibrary);
@@ -3967,6 +4908,12 @@ async function finishSoundImport(save){
 window.addEventListener('keydown',e=>{
     const nav=['ArrowUp','ArrowDown','Enter',' ','Escape','Backspace'];
     if(importBusy&&nav.includes(e.key)){e.preventDefault();e.stopImmediatePropagation();return;}
+    if(importDraft&&currentState===ScreenState.AI_COMPARE&&aiPair&&['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' ','Escape','Backspace'].includes(e.key)){
+        e.preventDefault();e.stopImmediatePropagation();wakeBacklight();
+        if(e.key==='Enter'||e.key===' ')finishSoundImport(true); // keeps the take being heard; the other is dropped natively
+        else if(e.key!=='Escape'&&e.key!=='Backspace')selectAiTake(aiPair.current?0:1); // Back does nothing here
+        return;
+    }
     if(importDraft&&['Escape','Backspace'].includes(e.key)&&[ScreenState.AI_RESULT,ScreenState.AI_TUNE,ScreenState.EDIT_VOICE].includes(currentState)){
         e.preventDefault();e.stopImmediatePropagation();currentState=ScreenState.IMPORT_CONFIRM;importConfirmRow=0;render();return;
     }
@@ -3975,17 +4922,17 @@ window.addEventListener('keydown',e=>{
     }
     if(![ScreenState.IMPORT_CONFIRM,ScreenState.IMPORT_LOADING].includes(currentState)||!nav.includes(e.key))return;
     e.preventDefault();e.stopImmediatePropagation();wakeBacklight();
-    if(currentState===ScreenState.IMPORT_LOADING){if(['Escape','Backspace'].includes(e.key))currentState=importDraft?ScreenState.EDIT_VOICE:importReturnState;render();return;}
+    if(currentState===ScreenState.IMPORT_LOADING){if(['Escape','Backspace'].includes(e.key))currentState=importDraft?(aiPair?ScreenState.AI_COMPARE:ScreenState.EDIT_VOICE):importReturnState;render();return;}
     if(currentState===ScreenState.IMPORT_CONFIRM){
         if(e.key==='ArrowUp'||e.key==='ArrowDown')importConfirmRow=(importConfirmRow+(e.key==='ArrowUp'?-1:1)+2)%2;
         else if(e.key==='Enter'||e.key===' '){finishSoundImport(importConfirmRow===0);return;}
-        else if(['Escape','Backspace'].includes(e.key))openSampleEditor();
+        else if(['Escape','Backspace'].includes(e.key)){if(aiPair)currentState=ScreenState.AI_COMPARE;else openSampleEditor();}
     }
     render();
 },true);
 window.addEventListener('dragover',e=>{if(e.dataTransfer?.types?.includes('Files')){e.preventDefault();e.dataTransfer.dropEffect=importBusy||importDraft?'none':'copy';wakeBacklight();document.getElementById('screen-frame').classList.add('import-hover');}});
 window.addEventListener('dragleave',e=>{if(!e.relatedTarget)document.getElementById('screen-frame').classList.remove('import-hover');});
-window.addEventListener('drop',e=>{e.preventDefault();document.getElementById('screen-frame').classList.remove('import-hover');if(e.dataTransfer?.files?.length===1)beginSoundImport(e.dataTransfer.files[0]);});
+window.addEventListener('drop',e=>{e.preventDefault();document.getElementById('screen-frame').classList.remove('import-hover');if(e.dataTransfer?.files?.length===1){if(currentState===ScreenState.PHOTO)choosePhoto(e.dataTransfer.files[0]);else beginSoundImport(e.dataTransfer.files[0]);}});
 setInterval(()=>{if(currentState===ScreenState.IMPORT_LOADING&&importBusy&&!document.hidden)render();},180);
 
 function renderRootTune(){

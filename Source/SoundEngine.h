@@ -175,6 +175,7 @@ public:
     // Get current ToneCard instrument names for WebGUI
     juce::StringArray getInstrumentNames() const;
     juce::var getInstrumentLibrary() const;
+    juce::var setInstrumentMeta(int instrumentIndex, const juce::var& meta);
     juce::var getInstrumentEditorData(int instrumentIndex) const;
     juce::var setInstrumentEditorControls(int instrumentIndex, float start, float end, int rootMidiNote, float rootCents = NAN, int pitched = -1);
     juce::var setInstrumentLoop(int instrumentIndex, int selection);

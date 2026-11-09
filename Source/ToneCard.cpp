@@ -329,6 +329,7 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         VoiceParams savedParams { 10, 1, 3, 5, 1, 10, 5 };
         float trimStart = 0.0f, trimEnd = 1.0f;
         juce::String savedName; // a name the user typed in the editor wins over the prompt
+        juce::String savedThumb, savedTag;
         int savedRoot = prepared.rootMidiNote;
         bool savedPitched = prepared.pitched, savedUseOriginal = false;
         const auto settingsFile = file.getSiblingFile(file.getFileName() + ".2g.json");
@@ -346,7 +347,17 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
                 savedParams.quality = readFloat("quality", savedParams.quality);
                 trimStart = readFloat("trimStart", trimStart);
                 trimEnd = readFloat("trimEnd", trimEnd);
-                if (settings.hasProperty("name")) savedName = settings["name"].toString().trim().substring(0, 28);
+                if (settings.hasProperty("name")) savedName = settings["name"].toString().trim().substring(0, 48);
+                if (settings.hasProperty("thumb"))
+                {
+                    const auto thumb = settings["thumb"].toString();
+                    if (thumb.length() == 38 * 22 && thumb.containsOnly("012")) savedThumb = thumb;
+                }
+                if (settings.hasProperty("tag"))
+                {
+                    const auto tag = settings["tag"].toString();
+                    if (tag.length() <= 16 && tag.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) savedTag = tag;
+                }
                 savedRoot = settings.hasProperty("rootNote") ? (int)settings["rootNote"] : savedRoot;
                 savedPitched = settings.hasProperty("pitched") ? (bool)settings["pitched"] : savedPitched;
                 savedUseOriginal = settings.hasProperty("useOriginal") ? (bool)settings["useOriginal"] : false;
@@ -361,9 +372,11 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         }
 
         Instrument instrument;
-        instrument.name = savedName.isNotEmpty() ? savedName : prepared.prompt.substring(0, 28);
+        instrument.name = savedName.isNotEmpty() ? savedName : prepared.prompt.substring(0, 48);
         instrument.category = uploaded ? "Uploaded" : "Generated";
         instrument.uploaded = uploaded;
+        instrument.thumbnail = savedThumb;
+        instrument.tag = savedTag;
         instrument.body = std::move(prepared.processed);
         instrument.originalBody = std::move(prepared.original);
         instrument.originalOffset = prepared.originalOffset;

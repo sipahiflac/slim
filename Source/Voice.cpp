@@ -390,6 +390,14 @@ float Voice::renderSample(bool movementEnabled)
                 sampleBody = readLinear(bodyPos);
                 bodyPos += effectivePitchRatio;
             }
+            // The last 15 ms before the end marker (a trim, or the file's end) ease to zero, so a cut never lands
+            // mid-wave. A running loop is left alone: its own crossfade owns that seam.
+            if (!validLoop || loopReleased)
+            {
+                const double tailLength = 0.015 * (double)kEngineSampleRateF;
+                const float left = (float)std::clamp(((double)playEnd - bodyPos) / tailLength, 0.0, 1.0);
+                sampleBody *= left * left * (3.0f - 2.0f * left);
+            }
         }
         else if (tickPos >= (double)tickBuf.size())
         {

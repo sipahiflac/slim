@@ -154,6 +154,11 @@ MainComponent::MainComponent()
             else sampleImporter->choose(std::move(done));
         })
         .withNativeFunction("finishImport", [this](const auto& args, auto done) { sampleImporter->finish(!args.isEmpty() && (bool)args[0], std::move(done)); })
+        .withNativeFunction("auditionTake", [this](const auto& args, auto done) { done(sampleImporter->audition(args.isEmpty() ? 0 : (int)args[0])); })
+        .withNativeFunction("loadPhoto", [this](const auto& args, auto done) {
+            if (args.size() >= 2) sampleImporter->dropPhoto(args[0].toString(), args[1].toString(), std::move(done));
+            else sampleImporter->choosePhoto(std::move(done));
+        })
         .withNativeFunction("getMasterVolume", [this](const auto&, auto done) { done(soundEngine.getMasterVolume()); })
         .withNativeFunction("getSpeakerSim", [this](const auto&, auto done) { done(soundEngine.isSpeakerSimulationEnabled()); })
         .withNativeFunction("setMasterVolume", [this](const auto& args, auto done) {
@@ -216,6 +221,11 @@ MainComponent::MainComponent()
             }
             done(true);
         })
+        .withNativeFunction("devChordsEnabled", [](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            // The developer chords (Ctrl+Shift+D demo mode, Ctrl+Shift+B boot replay, Ctrl+1..5 macros) are only
+            // wired when the standalone is started with SCRAPBRAIN_DEV=1; an ordinary install never has them.
+            done(juce::SystemStats::getEnvironmentVariable("SCRAPBRAIN_DEV", {}).trim() == "1");
+        })
         .withNativeFunction("getNoteGate", [this](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
             done(soundEngine.getDisplayInputState());
         })
@@ -235,6 +245,18 @@ MainComponent::MainComponent()
             juce::Component::SafePointer<MainComponent> safeThis(this);
             if (!juce::Thread::launch([safeThis, id, message, choice, done]() mutable {
                 auto result = LicenseClient::submitFeedback(id, message, choice);
+                juce::MessageManager::callAsync([safeThis, result = std::move(result), done = std::move(done)]() mutable {
+                    if (safeThis != nullptr) done(std::move(result));
+                });
+            })) done(makeGenerationError("Service busy"));
+        })
+        .withNativeFunction("categorizeSounds", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            juce::StringArray names;
+            if (args.size() > 0 && args[0].isArray())
+                for (const auto& item : *args[0].getArray()) names.add(item.toString());
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            if (!juce::Thread::launch([safeThis, names, done]() mutable {
+                auto result = LicenseClient::categorize(names);
                 juce::MessageManager::callAsync([safeThis, result = std::move(result), done = std::move(done)]() mutable {
                     if (safeThis != nullptr) done(std::move(result));
                 });
@@ -328,6 +350,13 @@ MainComponent::MainComponent()
             if ((bool)result["ok"]) persistInstrumentSettings(index);
             completion(std::move(result));
         })
+        .withNativeFunction("setSoundMeta", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+            if (args.size() < 2) { completion(makeGenerationError("Invalid meta")); return; }
+            const int index = (int)args[0];
+            auto result = soundEngine.setInstrumentMeta(index, args[1]);
+            if ((bool)result["ok"]) persistInstrumentSettings(index);
+            completion(std::move(result));
+        })
         .withNativeFunction("deleteGeneratedSample", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
             const int index = args.isEmpty() ? -1 : (int)args[0];
             auto result = withAudioDetached([&] { return soundEngine.deleteGeneratedSample(index); });
@@ -388,7 +417,10 @@ MainComponent::MainComponent()
 
     webView = std::make_unique<juce::WebBrowserComponent>(options);
     addAndMakeVisible(*webView);
-    // Release build: no native developer-shortcut watcher (DevShortcutWatcher.h is kept for development builds).
+    // WebView2 can swallow Ctrl+Shift+D before the page sees it, so the native watcher is started too, but only
+    // when SCRAPBRAIN_DEV=1 is set. A normal install runs without it.
+    if (juce::SystemStats::getEnvironmentVariable("SCRAPBRAIN_DEV", {}).trim() == "1")
+        devShortcutWatcher = std::make_unique<DevShortcutWatcher>(*webView);
 
     setSize(320, 440);
 
@@ -596,7 +628,8 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
                                         const juce::var& options,
                                         juce::WebBrowserComponent::NativeFunctionCompletion completion)
 {
-    const auto prompt = rawPrompt.trim().substring(0, 450);
+    const auto generationOptions = GenerationOptions::fromVar(options);
+    const auto prompt = generationOptions.photo ? juce::String("photo") : rawPrompt.trim().substring(0, 450);
     if (!toneCardInstalled)
     {
         // The card still loading from disk would replace the new sample.
@@ -608,6 +641,11 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
         completion(makeGenerationError("Write something"));
         return;
     }
+    if (generationOptions.photo && !sampleImporter->hasPhoto())
+    {
+        completion(makeGenerationError("Choose a photo first"));
+        return;
+    }
     if (sampleImporter->pending())
     {
         // Checked before the request: install() would refuse it after the credit was already spent.
@@ -617,27 +655,37 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
 
     const bool forceUnpitched = prompt.containsWholeWordIgnoreCase("chord");
     const auto& apiPrompt = prompt;
-    const auto generationOptions = GenerationOptions::fromVar(options);
     const float promptInfluence = generationOptions.influence >= 0.0f ? generationOptions.influence : loadPromptInfluence();
+    // The photo is copied for the worker thread; the importer keeps its own for the next generation.
+    const juce::MemoryBlock photoCopy = generationOptions.photo ? sampleImporter->photo() : juce::MemoryBlock();
+    const juce::String photoType = generationOptions.photo ? sampleImporter->photoType() : juce::String();
 
     juce::Component::SafePointer<MainComponent> safeThis(this);
     const bool launched = juce::Thread::launch([safeThis, prompt, apiPrompt, forceUnpitched, promptInfluence, generationOptions,
-                                                completion = std::move(completion)]() mutable
+                                                photoCopy, photoType, completion = std::move(completion)]() mutable
     {
         juce::String error;
-        juce::String kind;
-        auto audio = LicenseClient::generate(apiPrompt, promptInfluence, error, generationOptions, &kind);
-        // The server's rewrite says whether this is a note or a hit/effect; those get no root note.
-        const bool unpitched = forceUnpitched || kind == "hit" || kind == "effect";
-        PreparedGeneratedSample prepared;
-        if (error.isEmpty())
+        std::vector<juce::MemoryBlock> audio;
+        std::vector<juce::String> kinds, captions;
+        LicenseClient::generateVariants(apiPrompt, promptInfluence, error, audio, kinds, generationOptions,
+                                        generationOptions.photo ? &photoCopy : nullptr, photoType, &captions);
+        // Each take is prepared on its own: the server's rewrite says whether it is a note or a hit/effect, and those
+        // get no root note. One take that cannot be decoded still leaves the other to play.
+        std::vector<PreparedGeneratedSample> takes;
+        juce::String decodeError;
+        for (size_t i = 0; error.isEmpty() && i < audio.size(); ++i)
         {
-            prepared = ToneCard::prepareGeneratedSample(audio, prompt, unpitched, false, !unpitched, generationOptions.loop);
-            if (prepared.error.isNotEmpty()) error = prepared.error;
-            else SoundEngine::calibratePrepared(prepared);
+            const bool unpitched = forceUnpitched || kinds[i] == "hit" || kinds[i] == "effect";
+            // A photo's instrument is named after the caption the server wrote for it.
+            const auto name = generationOptions.photo && i < captions.size() && captions[i].isNotEmpty() ? captions[i] : prompt;
+            auto prepared = ToneCard::prepareGeneratedSample(audio[i], name, unpitched, false, !unpitched, generationOptions.loop);
+            if (prepared.error.isNotEmpty()) { decodeError = prepared.error; continue; }
+            SoundEngine::calibratePrepared(prepared);
+            takes.push_back(std::move(prepared));
         }
+        if (error.isEmpty() && takes.empty()) error = decodeError.isNotEmpty() ? decodeError : "Generation failed - try again";
 
-        juce::MessageManager::callAsync([safeThis, prepared = std::move(prepared), error,
+        juce::MessageManager::callAsync([safeThis, takes = std::move(takes), error,
                                          completion = std::move(completion)]() mutable
         {
             if (safeThis == nullptr) return;
@@ -647,7 +695,9 @@ void MainComponent::generateSoundEffect(const juce::String& rawPrompt,
                 return;
             }
 
-            auto result = safeThis->sampleImporter->install(std::move(prepared));
+            auto result = takes.size() > 1
+                ? safeThis->sampleImporter->installPair(std::move(takes[0]), std::move(takes[1]))
+                : safeThis->sampleImporter->install(std::move(takes[0]));
             if ((bool)result["ok"])
             {
                 safeThis->soundEngine.selectVoice((int)result["index"]);

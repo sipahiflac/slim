@@ -20,6 +20,9 @@ struct Instrument
     bool importDraft = false;
     juce::String name;
     juce::String category = "Generated";
+    // Kept in the sound's own .2g.json so both the standalone and the plug-in see them: the picture a sound was made
+    // from (38 x 22 pixels, one of 0/1/2 each) and the kind the language model filed it under (Keys, Winds ...).
+    juce::String thumbnail, tag;
     std::vector<float> tick; // kEngineSampleRate mono sample (one-shot transient)
     std::vector<float> body; // kEngineSampleRate mono waveform (looped)
     std::vector<float> originalBody; // Immutable decoded source for Raw/Proc comparison.

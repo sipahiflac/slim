@@ -161,6 +161,11 @@ public:
                 else sampleImporter->choose(std::move(done));
             })
             .withNativeFunction("finishImport", [this](const auto& args, auto done) { sampleImporter->finish(!args.isEmpty() && (bool)args[0], std::move(done)); })
+            .withNativeFunction("auditionTake", [this](const auto& args, auto done) { done(sampleImporter->audition(args.isEmpty() ? 0 : (int)args[0])); })
+            .withNativeFunction("loadPhoto", [this](const auto& args, auto done) {
+                if (args.size() >= 2) sampleImporter->dropPhoto(args[0].toString(), args[1].toString(), std::move(done));
+                else sampleImporter->choosePhoto(std::move(done));
+            })
             .withNativeFunction("getMasterVolume", [this](const auto&, auto done) { done(processor.getEngine().getMasterVolume()); })
             .withNativeFunction("getSpeakerSim", [this](const auto&, auto done) { done(processor.getEngine().isSpeakerSimulationEnabled()); })
             .withNativeFunction("setMasterVolume", [this](const auto& args, auto done) {
@@ -241,6 +246,18 @@ public:
                     });
                 })) done(errorResult("Service busy"));
             })
+            .withNativeFunction("categorizeSounds", [this](const auto& args, auto done) {
+                juce::StringArray names;
+                if (args.size() > 0 && args[0].isArray())
+                    for (const auto& item : *args[0].getArray()) names.add(item.toString());
+                juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
+                if (!juce::Thread::launch([safeThis, names, done]() mutable {
+                    auto result = LicenseClient::categorize(names);
+                    juce::MessageManager::callAsync([safeThis, result = std::move(result), done = std::move(done)]() mutable {
+                        if (safeThis != nullptr) done(std::move(result));
+                    });
+                })) done(errorResult("Service busy"));
+            })
             .withNativeFunction("checkForUpdate", [this](const auto&, auto done) {
                 juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
                 if (!juce::Thread::launch([safeThis, done]() mutable {
@@ -291,6 +308,12 @@ public:
             .withNativeFunction("setInstrumentLoop", [this](const auto& args, auto done) {
                 if (args.size() < 2) { done(errorResult("Invalid loop selection")); return; }
                 const auto index = (int) args[0]; auto result = processor.getEngine().setInstrumentLoop(index, (int) args[1]);
+                if ((bool) result["ok"]) saveSettings(index); done(std::move(result));
+            })
+            .withNativeFunction("setSoundMeta", [this](const auto& args, auto done) {
+                if (args.size() < 2) { done(errorResult("Invalid meta")); return; }
+                const auto index = (int) args[0];
+                auto result = processor.getEngine().setInstrumentMeta(index, args[1]);
                 if ((bool) result["ok"]) saveSettings(index); done(std::move(result));
             })
             .withNativeFunction("setGeneratedSampleControls", [this](const auto& args, auto done) {
@@ -385,34 +408,48 @@ private:
     void generateSoundEffect(const juce::String& rawPrompt, const juce::var& options,
                              juce::WebBrowserComponent::NativeFunctionCompletion completion)
     {
-        const auto prompt = rawPrompt.trim().substring(0, 450);
+        const auto generationOptions = GenerationOptions::fromVar(options);
+        const auto prompt = generationOptions.photo ? juce::String("photo") : rawPrompt.trim().substring(0, 450);
         if (prompt.isEmpty()) { completion(errorResult("Write something")); return; }
+        if (generationOptions.photo && !sampleImporter->hasPhoto()) { completion(errorResult("Choose a photo first")); return; }
         // Checked before the request: install() would refuse it after the credit was already spent.
         if (sampleImporter->pending()) { completion(errorResult("Save or discard first")); return; }
         const bool forceUnpitched = prompt.containsWholeWordIgnoreCase("chord");
         const auto& apiPrompt = prompt;
-        const auto generationOptions = GenerationOptions::fromVar(options);
         const float influence = generationOptions.influence >= 0.0f ? generationOptions.influence : promptInfluence();
+        const juce::MemoryBlock photoCopy = generationOptions.photo ? sampleImporter->photo() : juce::MemoryBlock();
+        const juce::String photoType = generationOptions.photo ? sampleImporter->photoType() : juce::String();
 
         juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
-        if (!juce::Thread::launch([safeThis, prompt, apiPrompt, forceUnpitched, influence, generationOptions,
+        if (!juce::Thread::launch([safeThis, prompt, apiPrompt, forceUnpitched, influence, generationOptions, photoCopy, photoType,
                                    completion = std::move(completion)]() mutable
         {
             juce::String error;
-            juce::String kind;
-            auto audio = LicenseClient::generate(apiPrompt, influence, error, generationOptions, &kind);
-            const bool unpitched = forceUnpitched || kind == "hit" || kind == "effect";
-            auto prepared = error.isEmpty() ? ToneCard::prepareGeneratedSample(audio, prompt, unpitched, false, !unpitched, generationOptions.loop)
-                                            : PreparedGeneratedSample{};
-            if (prepared.error.isNotEmpty()) error = prepared.error;
-            else if (error.isEmpty()) SoundEngine::calibratePrepared(prepared);
-            juce::MessageManager::callAsync([safeThis, prepared = std::move(prepared), error,
+            std::vector<juce::MemoryBlock> audio;
+            std::vector<juce::String> kinds, captions;
+            LicenseClient::generateVariants(apiPrompt, influence, error, audio, kinds, generationOptions,
+                                            generationOptions.photo ? &photoCopy : nullptr, photoType, &captions);
+            std::vector<PreparedGeneratedSample> takes;
+            juce::String decodeError;
+            for (size_t i = 0; error.isEmpty() && i < audio.size(); ++i)
+            {
+                const bool unpitched = forceUnpitched || kinds[i] == "hit" || kinds[i] == "effect";
+                const auto name = generationOptions.photo && i < captions.size() && captions[i].isNotEmpty() ? captions[i] : prompt;
+                auto prepared = ToneCard::prepareGeneratedSample(audio[i], name, unpitched, false, !unpitched, generationOptions.loop);
+                if (prepared.error.isNotEmpty()) { decodeError = prepared.error; continue; }
+                SoundEngine::calibratePrepared(prepared);
+                takes.push_back(std::move(prepared));
+            }
+            if (error.isEmpty() && takes.empty()) error = decodeError.isNotEmpty() ? decodeError : "Generation failed - try again";
+            juce::MessageManager::callAsync([safeThis, takes = std::move(takes), error,
                                              completion = std::move(completion)]() mutable
             {
                 if (safeThis == nullptr) return;
                 if (error.isNotEmpty()) { completion(errorResult(error)); return; }
                 const juce::ScopedLock lock(safeThis->processor.getCallbackLock());
-                auto result = safeThis->sampleImporter->install(std::move(prepared));
+                auto result = takes.size() > 1
+                    ? safeThis->sampleImporter->installPair(std::move(takes[0]), std::move(takes[1]))
+                    : safeThis->sampleImporter->install(std::move(takes[0]));
                 if ((bool) result["ok"])
                 {
                     safeThis->processor.selectSound((int) result["index"]);
