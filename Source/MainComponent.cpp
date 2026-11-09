@@ -271,6 +271,9 @@ MainComponent::MainComponent()
                 });
             })) done(makeGenerationError("Service busy"));
         })
+        .withNativeFunction("openStudioPage", [](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
+            done(LicenseClient::openStudioPage());
+        })
         .withNativeFunction("openUpdatePage", [](const juce::Array<juce::var>&, juce::WebBrowserComponent::NativeFunctionCompletion done) {
             done(LicenseClient::openUpdatePage());
         })

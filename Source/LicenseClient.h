@@ -52,6 +52,8 @@ public:
     // kept here (never handed to the page), so openUpdatePage() can only open a checked scrapbrainaudio.com link.
     static juce::var checkForUpdate();
     static bool openUpdatePage();
+    // Opens the plans on our own 2G page (a fixed address, nothing from the page or the server).
+    static bool openStudioPage();
 
 private:
     static juce::String deviceId();

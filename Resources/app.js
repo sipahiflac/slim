@@ -14,9 +14,10 @@ window.addEventListener('wheel', e => {
 let devChords = false;
 window.addEventListener('keydown', e => {
     // Release build: the developer chords are only wired when the standalone was started with SCRAPBRAIN_DEV=1
-    // (see devChords below). Ctrl+Shift+D demo mode, Ctrl+Shift+B boot replay, Ctrl+1..5 demo macros.
+    // (see devChords below). Ctrl+Shift+D demo mode, Ctrl+Shift+F Free-licence preview, Ctrl+Shift+B boot replay, Ctrl+1..5 demo macros.
     if (devChords && e.ctrlKey && !e.altKey && !e.metaKey) {
         if (e.shiftKey && e.code === 'KeyD') { e.preventDefault(); e.stopImmediatePropagation(); requestDemoToggle(); return; }
+        if (e.shiftKey && e.code === 'KeyF') { e.preventDefault(); e.stopImmediatePropagation(); freePreview = !freePreview; render(); return; }   // pretend to be a Free licence (to see the upsells)
         if (e.shiftKey && e.code === 'KeyB' && demoMode) { e.preventDefault(); e.stopImmediatePropagation(); replayDemoBoot(); return; }
         if (!e.shiftKey && demoMode && /^Digit[1-5]$/.test(e.code)) { e.preventDefault(); e.stopImmediatePropagation(); playDemoMacro(Number(e.code.slice(5)) - 1); return; }
     }
@@ -719,6 +720,7 @@ const REGULAR_GLYPHS = {
     '/': { w: 4, rows: [0b0001, 0b0001, 0b0010, 0b0010, 0b0100, 0b0100, 0b1000] },
     '%': { w: 5, rows: [0b11001, 0b11010, 0b00100, 0b01000, 0b10110, 0b00110, 0] },
     '_': { w: 5, rows: [0, 0, 0, 0, 0, 0, 0b11111] },
+    '^': { w: 5, rows: [0b00100, 0b01010, 0b10001, 0, 0, 0, 0] },
     '=': { w: 4, rows: [0, 0b1111, 0, 0b1111, 0, 0, 0] },
     '!': { w: 1, rows: [0b1, 0b1, 0b1, 0b1, 0b1, 0, 0b1] },
     "'": { w: 1, rows: [0b1, 0b1, 0, 0, 0, 0, 0] },
@@ -3145,7 +3147,20 @@ const ROOM_TABLE_BOXES=(()=>{
 let roomX=1.6,roomY=4.5,roomAngle=0,roomLastDraw=0;
 // A short, friendly note the first time Capture is opened (kept per install in localStorage).
 const CAPTURE_NOTICE="Capture makes a sound from a photo. To describe your photo, it is sent to a third-party AI provider. We do not store your photos on our servers and we cannot access them afterwards.";
-let captureNoticeScroll=0;
+let captureNoticeScroll=0,captureNoticeOpen=false,captureUpsellOpen=false;
+// The room is open to everyone (curiosity sells); taking a photo is a Studio feature. Studio sees the privacy note once
+// before the first photo; everyone else is told what Capture is and where it comes from. (The server enforces it too.)
+const CAPTURE_UPSELL="Turn any photo into a sound. Capture comes with a Studio subscription. Credits cost us real money, and we would love it to be free, but someone has to keep the pot boiling ^^";
+function openStudioPage() {
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('openStudioPage');
+    if(fn)fn().catch(()=>{});
+    else try{window.open('https://scrapbrainaudio.com/2g#pricing','_blank','noopener');}catch(_){}
+}
+function pressCapture(file=null) {
+    if(!studioUnlocked()){captureUpsellOpen=true;captureNoticeScroll=0;render();return;}
+    if(!captureNoticeSeen){captureNoticeOpen=true;captureNoticeScroll=0;render();return;}
+    choosePhoto(file);
+}
 let captureNoticeSeen=(()=>{try{return localStorage.getItem('captureNotice2G')==='1';}catch(_){return false;}})();
 const roomBright=new Float32Array(PHOTO_W*PHOTO_H),roomDepthBuffer=new Float32Array(PHOTO_W);
 function roomBlocked(x,y) {
@@ -3304,7 +3319,15 @@ function renderPhoto() {
         ctx.fillStyle=getColor(0);ctx.fillRect(4,24,88,14);drawCompareFrame(4,24,88,14,1);
         drawStringCentered(28,fitText(photoError,82,FONTS.Regular),FONTS.Regular,1);
     }
-    if(!captureNoticeSeen){
+    if(captureUpsellOpen){
+        // Same framed note as the privacy text: five lines at a time, Up/Down read on.
+        const lines=wrapBitmapText(CAPTURE_UPSELL,76,40,FONTS.Regular),visible=5,most=Math.max(0,lines.length-visible);
+        captureNoticeScroll=Math.max(0,Math.min(most,captureNoticeScroll));
+        ctx.fillStyle=getColor(0);ctx.fillRect(4,4,88,54);drawCompareFrame(4,4,88,54,1);
+        lines.slice(captureNoticeScroll,captureNoticeScroll+visible).forEach((line,i)=>drawString(8,9+i*9,line,FONTS.Regular,1));
+        if(most>0)drawLcdSlider(88,9,43,captureNoticeScroll/most);
+        drawSoftkeys('OK','Studio');
+    }else if(captureNoticeOpen){
         // A framed note, five lines at a time; Up/Down read on.
         const lines=wrapBitmapText(CAPTURE_NOTICE,76,40,FONTS.Regular),visible=5,most=Math.max(0,lines.length-visible);
         captureNoticeScroll=Math.max(0,Math.min(most,captureNoticeScroll));
@@ -4214,14 +4237,21 @@ window.addEventListener('keydown', (e) => {
         return;
     }
     if(currentState===ScreenState.PHOTO){
-        if(!captureNoticeSeen){
-            if(e.key==='Enter'||e.key===' '){captureNoticeSeen=true;try{localStorage.setItem('captureNotice2G','1');}catch(_){}render();}
+        if(captureUpsellOpen){
+            if(e.key==='Enter'||e.key===' '||e.key==='Backspace'){captureUpsellOpen=false;render();}
+            else if(e.key==='Escape'){captureUpsellOpen=false;openStudioPage();render();}   // the right soft key: Studio
             else if(e.key==='ArrowDown'){captureNoticeScroll++;render();}
             else if(e.key==='ArrowUp'){captureNoticeScroll--;render();}
-            else if(e.key==='Escape'||e.key==='Backspace'){photoError='';roomHeld.clear();currentState=ScreenState.MENU;render();}
             e.preventDefault();return;
         }
-        if(e.key==='Enter'||e.key===' ')choosePhoto();
+        if(captureNoticeOpen){
+            if(e.key==='Enter'||e.key===' '){captureNoticeSeen=true;captureNoticeOpen=false;try{localStorage.setItem('captureNotice2G','1');}catch(_){}choosePhoto();}
+            else if(e.key==='ArrowDown'){captureNoticeScroll++;render();}
+            else if(e.key==='ArrowUp'){captureNoticeScroll--;render();}
+            else if(e.key==='Escape'||e.key==='Backspace'){captureNoticeOpen=false;render();}
+            e.preventDefault();return;
+        }
+        if(e.key==='Enter'||e.key===' ')pressCapture();
         else if(e.key==='Escape'||e.key==='Backspace'){photoError='';roomHeld.clear();currentState=ScreenState.MENU;render();}
         else if(e.key==='ArrowLeft'||e.key==='ArrowRight'||e.key==='ArrowUp'||e.key==='ArrowDown'){
             roomShift=e.shiftKey;
@@ -4932,7 +4962,7 @@ window.addEventListener('keydown',e=>{
 },true);
 window.addEventListener('dragover',e=>{if(e.dataTransfer?.types?.includes('Files')){e.preventDefault();e.dataTransfer.dropEffect=importBusy||importDraft?'none':'copy';wakeBacklight();document.getElementById('screen-frame').classList.add('import-hover');}});
 window.addEventListener('dragleave',e=>{if(!e.relatedTarget)document.getElementById('screen-frame').classList.remove('import-hover');});
-window.addEventListener('drop',e=>{e.preventDefault();document.getElementById('screen-frame').classList.remove('import-hover');if(e.dataTransfer?.files?.length===1){if(currentState===ScreenState.PHOTO)choosePhoto(e.dataTransfer.files[0]);else beginSoundImport(e.dataTransfer.files[0]);}});
+window.addEventListener('drop',e=>{e.preventDefault();document.getElementById('screen-frame').classList.remove('import-hover');if(e.dataTransfer?.files?.length===1){if(currentState===ScreenState.PHOTO)pressCapture(e.dataTransfer.files[0]);else beginSoundImport(e.dataTransfer.files[0]);}});
 setInterval(()=>{if(currentState===ScreenState.IMPORT_LOADING&&importBusy&&!document.hidden)render();},180);
 
 function renderRootTune(){

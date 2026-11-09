@@ -509,6 +509,11 @@ juce::var LicenseClient::checkForUpdate()
     return juce::var(result);
 }
 
+bool LicenseClient::openStudioPage()
+{
+    return juce::URL("https://scrapbrainaudio.com/2g#pricing").launchInDefaultBrowser();
+}
+
 bool LicenseClient::openUpdatePage()
 {
     juce::String link;

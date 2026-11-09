@@ -267,6 +267,7 @@ public:
                     });
                 })) done(errorResult("Service busy"));
             })
+            .withNativeFunction("openStudioPage", [](const auto&, auto done) { done(LicenseClient::openStudioPage()); })
             .withNativeFunction("openUpdatePage", [](const auto&, auto done) { done(LicenseClient::openUpdatePage()); })
             .withNativeFunction("activateLicense", [this](const auto& args, auto done) {
                 const auto code = args.isEmpty() ? juce::String() : args[0].toString();
