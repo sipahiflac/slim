@@ -27,7 +27,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       HAVE_SIGNING: ${{ secrets.MAC_CERT_APP_P12 != '' && secrets.MAC_CERT_INSTALLER_P12 != '' && secrets.AC_API_KEY_P8 != '' }}
     steps:
