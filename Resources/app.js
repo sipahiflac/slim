@@ -785,12 +785,15 @@ const phoneArtSource = document.getElementById('phone-art-source');
 const keySocketFills=[];
 
 function drawPhoneArtwork() {
-    const artCtx = phoneArtCanvas.getContext('2d');
+    const artCtx = phoneArtCanvas.getContext('2d', { willReadFrequently: true });
     artCtx.clearRect(0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
     artCtx.drawImage(phoneArtSource, 0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
     if(keySocketFills.length){
         const w=phoneArtCanvas.width,h=phoneArtCanvas.height;
         const frame=artCtx.getImageData(0,0,w,h),outside=new Uint8Array(w*h),queue=[];
+        // A browser that refuses to hand pixels back (privacy protections) gives zeros: keep the artwork as drawn.
+        let anyOpaque=false;for(let i=3;i<frame.data.length;i+=4)if(frame.data[i]>=16){anyOpaque=true;break;}
+        if(!anyOpaque)return;
         const visit=index=>{
             if(!outside[index]&&frame.data[index*4+3]<16){outside[index]=1;queue.push(index);}
         };
@@ -834,6 +837,9 @@ function prepareKeyArtwork() {
     const context = sheet.getContext('2d', { willReadFrequently: true });
     context.drawImage(keypadSource, 0, 0);
     const pixels = context.getImageData(0, 0, w, h);
+    let readable = false;
+    for (let i = 3; i < pixels.data.length; i += 4) if (pixels.data[i] >= 16) { readable = true; break; }
+    if (!readable) return;   // pixels were not handed back: leave the artwork as it is
     const seen = new Uint8Array(w * h);
     const pieces = [];
     const host = document.getElementById('key-art');
@@ -947,8 +953,9 @@ function animateRockerLight(face,direction){
     }
     face.lightFrame=requestAnimationFrame(tick);
 }
-if (keypadSource.complete) prepareKeyArtwork();
-else keypadSource.addEventListener('load', prepareKeyArtwork, { once: true });
+const prepareKeyArtworkSafely = () => { try { prepareKeyArtwork(); } catch (error) { console.warn('Key artwork:', error); } };
+if (keypadSource.complete) prepareKeyArtworkSafely();
+else keypadSource.addEventListener('load', prepareKeyArtworkSafely, { once: true });
 
 const canvas = document.createElement('canvas');
 canvas.width=96;canvas.height=73;

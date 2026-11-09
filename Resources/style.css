@@ -6,7 +6,8 @@ body { image-rendering: pixelated; }
 .workbench { position: relative; width: 300px; height: 416px; }
 .phone-artboard::before { content: ''; position: absolute; inset: 0; pointer-events: none; background: url('telback.png') center / 100% 100% no-repeat; filter: brightness(0); opacity: .23; transform: translate(9px,11px); }
 .phone-artboard { position: absolute; left: 0; top: -92px; width: 300px; height: 580px; }
-.phone-art { position: absolute; inset: 0; z-index: 1; width: 300px; height: 580px; image-rendering: pixelated; image-rendering: crisp-edges; }
+/* The picture is also the canvas's own background: if a browser will not paint the canvas, the phone still shows. */
+.phone-art { position: absolute; inset: 0; z-index: 1; width: 300px; height: 580px; image-rendering: pixelated; image-rendering: crisp-edges; background: url('telback.png') center / 100% 100% no-repeat; }
 
 /* The LCD maps 1:1 onto the artwork grid (96 x 73 art pixels at 2 CSS px each); the bezel ring below restores the dark edge it covers. */
 #screen-frame { position: absolute; z-index: 5; left: 54px; top: 186px; width: 192px; height: 146px; overflow: hidden; background: var(--screen); box-shadow: 0 0 0 4px #3e372a; }
