@@ -801,7 +801,10 @@ function drawPhoneArtwork() {
     const artCtx = phoneArtCanvas.getContext('2d', { willReadFrequently: true });
     artCtx.clearRect(0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
     artCtx.drawImage(phoneArtSource, 0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
-    if(keySocketFills.length&&CANVAS_READBACK){
+    if(window.KEY_ART&&Array.isArray(window.KEY_ART.seal)){
+        // The key holes are sealed from pre-cut data (tools/gen_key_art.py): no pixels are read back.
+        for(const [x,y,length,r,g,b] of window.KEY_ART.seal){artCtx.fillStyle=`rgb(${r},${g},${b})`;artCtx.fillRect(x,y,length,1);}
+    }else if(keySocketFills.length&&CANVAS_READBACK){
         const w=phoneArtCanvas.width,h=phoneArtCanvas.height;
         const frame=artCtx.getImageData(0,0,w,h),outside=new Uint8Array(w*h),queue=[];
         // A browser that refuses to hand pixels back (privacy protections) gives zeros: keep the artwork as drawn.
@@ -842,7 +845,65 @@ else phoneArtSource.addEventListener('load', drawPhoneArtwork, { once: true });
 // Each complete cap moves independently inside its original recess silhouette.
 const keypadSource = document.getElementById('phone-buttons-source');
 const keyFaces = new Map();
+// The key caps come pre-cut (Resources/key-art-data.js, made by tools/gen_key_art.py), so every web view shows the same
+// moving keys without reading canvas pixels back. The old cut-at-start-up path below stays as the fallback.
+function prepareKeyArtworkFromData(data) {
+    const host = document.getElementById('key-art');
+    const loads = data.keys.map(key => new Promise(resolve => {
+        const image = new Image();
+        image.onload = () => resolve(image); image.onerror = () => resolve(null);
+        image.src = key.png;
+    }));
+    Promise.all(loads).then(images => {
+        if (images.some(image => !image)) { host.classList.add('static-keys'); return; }
+        host.classList.remove('static-keys');
+        host.replaceChildren();
+        keyFaces.clear();
+        keySocketFills.length = 0;
+        const pieces = [];
+        data.keys.forEach((key, i) => {
+            const image = images[i];
+            const cap = document.createElement('canvas');
+            cap.width = key.w; cap.height = key.h;
+            cap.getContext('2d').drawImage(image, 0, 0);
+            cap.className = 'key-face';
+            cap.dataset.lower = String(!!key.lower);
+            cap.dataset.rocker = String(!!key.rocker);
+            if (key.rocker && key.rest) {
+                const raw = atob(key.rest), bytes = new Uint8ClampedArray(raw.length);
+                for (let j = 0; j < raw.length; j++) bytes[j] = raw.charCodeAt(j);
+                cap.restPixels = new ImageData(bytes, key.w, key.h);
+            }
+            keySocketFills.push({ x: key.x0 + (key.w - 1) / 2, y: key.y0 + (key.h - 1) / 2, rgb: key.recess });
+            const socket = document.createElement('div');
+            socket.className = 'key-socket';
+            const silhouette = `url("${key.png}")`;
+            Object.assign(socket.style, { left: `${key.x0 / data.w * 100}%`, top: `${key.y0 / data.h * 100}%`,
+                maskImage: silhouette, webkitMaskImage: silhouette,
+                width: `${key.w / data.w * 100}%`, height: `${key.h / data.h * 100}%` });
+            const recess = document.createElement('canvas');
+            recess.width = key.w; recess.height = key.h; recess.className = 'key-recess';
+            const recessContext = recess.getContext('2d');
+            recessContext.drawImage(image, 0, 0);
+            recessContext.globalCompositeOperation = 'source-in';
+            recessContext.fillStyle = 'rgb(' + key.recess.join(',') + ')';
+            recessContext.fillRect(0, 0, key.w, key.h);
+            socket.append(recess, cap);
+            host.appendChild(socket);
+            pieces.push({ cap, x: (key.x0 + key.w / 2) / data.w * 300, y: (key.y0 + key.h / 2) / data.h * 580 });
+        });
+        for (const button of document.querySelectorAll('.phone-key')) {
+            const x = button.offsetLeft + button.offsetWidth / 2;
+            const y = button.offsetTop + button.offsetHeight / 2;
+            const closest = pieces.reduce((best, piece) => !best ||
+                Math.hypot(piece.x - x, piece.y - y) < Math.hypot(best.x - x, best.y - y) ? piece : best, null);
+            if (closest) keyFaces.set(button, closest.cap);
+        }
+        syncPressedArtwork();
+    });
+}
 function prepareKeyArtwork() {
+    if (window.KEY_ART && Array.isArray(window.KEY_ART.keys) && window.KEY_ART.keys.length) { prepareKeyArtworkFromData(window.KEY_ART); return; }
     if (!keypadSource.naturalWidth) return;
     if (!CANVAS_READBACK) { document.getElementById('key-art').classList.add('static-keys'); return; }
     const sheet = document.createElement('canvas');
