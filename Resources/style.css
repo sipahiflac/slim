@@ -22,6 +22,8 @@ body { image-rendering: pixelated; }
 .phone-key { position: absolute; z-index: 6; appearance: none; border: 0; outline: 0; background: rgba(64,57,49,0); touch-action: none; transition: transform 90ms cubic-bezier(.2,.8,.3,1), background-color 90ms linear; }
 #ai-prompt-input, #license-code-input, #sample-name-input { position: fixed; left: -8px; top: -8px; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; resize: none; pointer-events: none; user-select: text; -webkit-user-select: text; }
 #key-art { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+/* Where canvas pixels cannot be read back (macOS WKWebView) the keypad is the plain picture. */
+#key-art.static-keys { background: url('telbuttons.png') center / 100% 100% no-repeat; image-rendering: pixelated; image-rendering: crisp-edges; }
 .key-socket { position: absolute; mask-size: 100% 100%; -webkit-mask-size: 100% 100%; mask-repeat: no-repeat; -webkit-mask-repeat: no-repeat; }
 .key-face, .key-recess { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; }
 .key-face { z-index: 1; }

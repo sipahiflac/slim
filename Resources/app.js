@@ -783,12 +783,25 @@ const LARGE_GLYPHS = {
 const phoneArtCanvas = document.getElementById('phone-art');
 const phoneArtSource = document.getElementById('phone-art-source');
 const keySocketFills=[];
+// Can this web view hand canvas pixels back exactly? WKWebView (macOS) does not reliably: it returns blank or altered
+// pixels. Without exact read-back the artwork is shown as it is drawn (no sealed key holes) and the keypad is one static
+// picture (keys do not dip when pressed) instead of being cut into moving caps.
+const CANVAS_READBACK=(()=>{
+    if(/Macintosh|Mac OS X/.test(navigator.userAgent))return false;
+    try{
+        const probe=document.createElement('canvas');probe.width=2;probe.height=1;
+        const c=probe.getContext('2d',{willReadFrequently:true});
+        c.fillStyle='rgb(10,200,30)';c.fillRect(0,0,1,1);
+        const d=c.getImageData(0,0,2,1).data;
+        return d[0]===10&&d[1]===200&&d[2]===30&&d[3]===255&&d[7]===0;
+    }catch(_){return false;}
+})();
 
 function drawPhoneArtwork() {
     const artCtx = phoneArtCanvas.getContext('2d', { willReadFrequently: true });
     artCtx.clearRect(0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
     artCtx.drawImage(phoneArtSource, 0, 0, phoneArtCanvas.width, phoneArtCanvas.height);
-    if(keySocketFills.length){
+    if(keySocketFills.length&&CANVAS_READBACK){
         const w=phoneArtCanvas.width,h=phoneArtCanvas.height;
         const frame=artCtx.getImageData(0,0,w,h),outside=new Uint8Array(w*h),queue=[];
         // A browser that refuses to hand pixels back (privacy protections) gives zeros: keep the artwork as drawn.
@@ -831,6 +844,7 @@ const keypadSource = document.getElementById('phone-buttons-source');
 const keyFaces = new Map();
 function prepareKeyArtwork() {
     if (!keypadSource.naturalWidth) return;
+    if (!CANVAS_READBACK) { document.getElementById('key-art').classList.add('static-keys'); return; }
     const sheet = document.createElement('canvas');
     const w = sheet.width = keypadSource.naturalWidth;
     const h = sheet.height = keypadSource.naturalHeight;
@@ -839,7 +853,7 @@ function prepareKeyArtwork() {
     const pixels = context.getImageData(0, 0, w, h);
     let readable = false;
     for (let i = 3; i < pixels.data.length; i += 4) if (pixels.data[i] >= 16) { readable = true; break; }
-    if (!readable) return;   // pixels were not handed back: leave the artwork as it is
+    if (!readable) { document.getElementById('key-art').classList.add('static-keys'); return; }   // no pixels back: static keypad
     const seen = new Uint8Array(w * h);
     const pieces = [];
     const host = document.getElementById('key-art');
@@ -953,7 +967,7 @@ function animateRockerLight(face,direction){
     }
     face.lightFrame=requestAnimationFrame(tick);
 }
-const prepareKeyArtworkSafely = () => { try { prepareKeyArtwork(); } catch (error) { console.warn('Key artwork:', error); } };
+const prepareKeyArtworkSafely = () => { try { prepareKeyArtwork(); } catch (error) { console.warn('Key artwork:', error); document.getElementById('key-art').classList.add('static-keys'); } };
 if (keypadSource.complete) prepareKeyArtworkSafely();
 else keypadSource.addEventListener('load', prepareKeyArtworkSafely, { once: true });
 
@@ -4802,7 +4816,10 @@ function playKeySound(name) {
         const rect=art.getBoundingClientRect();
         const x=Math.floor((event.clientX-rect.left)*art.width/rect.width),y=Math.floor((event.clientY-rect.top)*art.height/rect.height);
         let onCase=false;
-        if(x>=0&&y>=0&&x<art.width&&y<art.height){try{onCase=art.getContext('2d').getImageData(x,y,1,1).data[3]>=16;}catch(_){}}
+        if(x>=0&&y>=0&&x<art.width&&y<art.height){
+            if(!CANVAS_READBACK)onCase=true;
+            else try{onCase=art.getContext('2d').getImageData(x,y,1,1).data[3]>=16;}catch(_){}
+        }
         if(onCase){playTouch('plastic');spawnRipple(event.clientX,event.clientY);}
         else{playTouch('wood');spawnChips(event.clientX,event.clientY);}
     });
