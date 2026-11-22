@@ -518,6 +518,176 @@ ICONS.IconCamera=(()=>{
     return centred;
 })();
 
+// ---- Drum Kit art ----------------------------------------------------------------------------------------------
+// Pixel-perfect pictures for the pads and the floor toms of the waiting scene. Clean symmetric ellipses, exact 2:1 / 1:2 lines, one light from the upper
+// left: top faces lightest, walls in fixed vertical bands (edge turning away, highlight, mid, core shadow), one
+// ink outline around the silhouette only.
+// '#' ink, 'k' darkest, 'a' dark, 'b' mid, 'c' light, 'd' lightest, 'o' paper, '.' empty.
+const KIT_TONES = { '#': .10, k: .26, a: .42, b: .58, c: .74, d: .88, o: 1 };
+function kitEllipseSpans(W, H) {
+  const rows = [];
+  for (let y = 0; y < H; y++) {
+    const t = (y + .5 - H / 2) / (H / 2), hw = Math.round(W / 2 * Math.sqrt(Math.max(0, 1 - t * t)));
+    rows.push([W / 2 - hw, W / 2 + hw - 1]);
+  }
+  return rows;
+}
+const KIT_WALL_EDGES = [.1, .35, .6, .85];
+function kitSprite(w, h, build) {
+  const g = Array.from({ length: h }, () => Array(w).fill('.'));
+  const put = (x, y, c) => { if (x >= 0 && y >= 0 && x < w && y < h) g[y][x] = c; };
+  const get = (x, y) => (x >= 0 && y >= 0 && x < w && y < h) ? g[y][x] : '.';
+  const api = {
+    put, get,
+    rect(x0, y0, x1, y1, c) { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) put(x, y, c); },
+    // Exact pixel lines: dx:dy of 2:1, 1:1, 1:2 or straight.
+    line(x, y, dx, dy, n, c) { for (let i = 0; i < n; i++) put(x + Math.floor(i * dx), y + Math.floor(i * dy), c); },
+    ellipse(x, y, W, H, c) { kitEllipseSpans(W, H).forEach(([a, b], i) => { for (let k = a; k <= b; k++) put(x + k, y + i, c); }); },
+    // A cylinder whose top ellipse has its top-left corner at x,y.
+    cyl(x, y, W, H, wall, o = {}) {
+      const bands = o.bands || ['b', 'c', 'b', 'a', 'k'], top = o.top || 'o', rim = o.rim || 'b';
+      const band = c => { const f = (c + .5) / W; let i = 0; while (i < KIT_WALL_EDGES.length && f >= KIT_WALL_EDGES[i]) i++; return bands[i]; };
+      const spans = kitEllipseSpans(W, H), half = H / 2;
+      for (let r = Math.floor(half); r < Math.floor(half) + wall; r++) for (let c = 0; c < W; c++) put(x + c, y + r, band(c));
+      for (let i = Math.floor(half); i < H; i++) { const [a, b] = spans[i]; for (let c = a; c <= b; c++) put(x + c, y + wall + i, band(c)); }
+      for (const k of o.hoops || []) for (let i = Math.floor(half); i < H; i++) {   // a hoop: the front arc, k rows down
+        const [a, b] = spans[i], [na, nb] = spans[i + 1] || [W, -1];
+        for (let c = a; c <= b; c++) if (c < na || c > nb) put(x + c, y + k + i, o.hoopTone || 'k');
+      }
+      spans.forEach(([a, b], i) => { for (let c = a; c <= b; c++) put(x + c, y + i, top); });
+      for (let i = Math.floor(half); i < H; i++) {                                   // the head's front edge
+        const [a, b] = spans[i], [na, nb] = spans[i + 1] || [W, -1];
+        for (let c = a; c <= b; c++) if (c < na || c > nb) put(x + c, y + i, rim);
+      }
+    },
+    outline(c = '#') {
+      const copy = g.map(r => r.slice());
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (copy[y][x] !== '.') {
+        if ([[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => (copy[y + dy]?.[x + dx] ?? '.') === '.')) g[y][x] = c;
+      }
+    }
+  };
+  build(api);
+  return g.map(r => r.join(''));
+}
+
+const KIT_ICONS = {
+  // The kick drum standing upright as in a drum set: the round head faces us, a shallow shell shows behind it to the
+  // upper right (2:1), lit from above like the others.
+  kick: kitSprite(20, 20, a => {
+    const shell = ['d', 'd', 'c', 'c', 'b', 'b', 'b', 'a', 'a', 'a', 'k', 'k', 'k', 'k', 'k', 'k'];
+    for (let k = 2; k >= 1; k--) kitEllipseSpans(16, 16).forEach(([l, r], i) => {
+      for (let c = l; c <= r; c++) a.put(2 * k + c, 4 - k + i, shell[i]);
+    });
+    a.ellipse(0, 4, 16, 16, 'b');                                      // hoop
+    kitEllipseSpans(14, 14).forEach(([l, r], i) => { for (let c = l; c <= r; c++) a.put(1 + c, 5 + i, 'o'); });   // head
+    a.outline();
+  }),
+  // A shallow chrome-bright drum lying flat.
+  snare: kitSprite(20, 20, a => {
+    a.cyl(2, 6, 16, 8, 5, { top: 'o', rim: 'b', bands: ['c', 'd', 'c', 'b', 'a'], hoops: [4] });
+    a.outline();
+  }),
+  // Two thin cymbals on a rod, a tripod below.
+  hihat: kitSprite(20, 20, a => {
+    a.rect(9, 0, 10, 15, 'a');                                         // rod
+    a.line(9, 15, -1, 1, 5, '#'); a.line(10, 15, 1, 1, 5, '#');        // tripod legs (1:1)
+    a.rect(9, 15, 10, 19, 'a');
+    for (const y of [2, 9]) {
+      a.ellipse(0, y + 1, 20, 4, 'a');                                 // thickness
+      a.ellipse(0, y, 20, 4, 'c');
+      a.rect(4, y + 1, 9, y + 2, 'd');                                 // light on the left half
+      a.rect(8, y, 11, y + 1, 'b');                                    // the bell
+    }
+    a.outline();
+  }),
+  tambourine: kitSprite(20, 20, a => {
+    a.cyl(1, 5, 18, 8, 4, { top: 'o', rim: 'b' });
+    a.outline();
+    for (const x of [4, 9, 14]) { a.rect(x, 13, x + 1, 14, 'o'); a.rect(x, 15, x + 1, 15, 'k'); }   // jingle slots
+  }),
+  conga: kitSprite(20, 20, a => {
+    a.cyl(4, 0, 12, 6, 14, { top: 'o', rim: 'b', hoops: [5, 10] });
+    a.outline();
+  }),
+  // A drum-machine pad: an isometric slab with four square pads, one lit.
+  pad: kitSprite(20, 20, a => {
+    const P = (x, y, z) => [10 + 2 * (x - y), 8 + (x + y) - z];   // a 16 px wide slab, 2 px from each side, centred like the others
+    const quad = (pts, c) => {   // fill by pixel centres; integer 2:1 corners keep the edges clean
+      for (let y = 0; y < 20; y++) for (let x = 0; x < 20; x++) {
+        let odd = false;
+        for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+          const [xi, yi] = pts[i], [xj, yj] = pts[j];
+          if ((yi > y + .5) !== (yj > y + .5) && x + .5 < (xj - xi) * (y + .5 - yi) / (yj - yi) + xi) odd = !odd;
+        }
+        if (odd) a.put(x, y, c);
+      }
+    };
+    const L = 4, D = 4, Z = 3;
+    quad([P(L, 0, 0), P(L, D, 0), P(L, D, Z), P(L, 0, Z)], 'k');      // right face
+    quad([P(0, D, 0), P(L, D, 0), P(L, D, Z), P(0, D, Z)], 'b');      // front face
+    quad([P(0, 0, Z), P(L, 0, Z), P(L, D, Z), P(0, D, Z)], 'c');      // top
+    for (const [px, py, c] of [[.5, .5, 'a'], [2.25, .5, 'o'], [.5, 2.25, 'a'], [2.25, 2.25, 'a']])
+      quad([P(px, py, Z), P(px + 1.5, py, Z), P(px + 1.5, py + 1.5, Z), P(px, py + 1.5, Z)], c);
+    a.outline();
+  }),
+  // Floor toms for the stage: front (big) and back (small), legs to the floor; flash = head lit by a hit.
+  tomFront: kitSprite(24, 32, a => {
+    a.cyl(0, 3, 24, 12, 11, { hoops: [3] });
+    a.outline();
+    for (const [x, y0] of [[2, 22], [21, 22], [12, 25]]) for (let y = y0; y < 32; y++) if (a.get(x, y) === '.') a.put(x, y, '#');
+  }),
+  tomBack: kitSprite(18, 24, a => {
+    a.cyl(0, 2, 18, 9, 8, { hoops: [2] });
+    a.outline();
+    for (const [x, y0] of [[1, 16], [16, 16], [9, 18]]) for (let y = y0; y < 24; y++) if (a.get(x, y) === '.') a.put(x, y, '#');
+  })
+};
+// The 32 x 32 menu icon (same sprite values as the camera: 1 ink, 5 side, 6 dark, 7 mid, 8 light): a floor tom behind
+// and a snare in front, a crash cymbal on its stand at the back left, isometric (2:1 heads), lit from the left like
+// the other icons: light head with a mid rim, shell dark with an ink right edge, darker tension rods and an ink hoop
+// along the bottom. No sticks.
+ICONS.IconDrumKit=(()=>{
+    const N=32,g=Array.from({length:N},()=>Array(N).fill(0));
+    const inE=(x,y,cx,cy,rx,ry)=>((x+.5-cx)/rx)**2+((y+.5-cy)/ry)**2<=1;
+    const drum=(cx,bottomY,r,h)=>{
+        const ry=r/2,topY=bottomY-h;
+        for(let y=0;y<N;y++)for(let x=0;x<N;x++){
+            const dx=x+.5-cx,f=dx/r;
+            const shell=(Math.abs(dx)<=r&&y+.5>=topY&&y+.5<=bottomY)||inE(x,y,cx,bottomY,r,ry);
+            if(inE(x,y,cx,topY,r,ry))g[y][x]=inE(x,y,cx,topY,r-1.5,ry-0.9)?8:7;
+            else if(shell)g[y][x]=f>0.55?1:f>0.05?5:6;
+        }
+        for(let x=0;x<N;x++){   // ink hoop: the lowest shell pixel of every column
+            if(Math.abs(x+.5-cx)>=r)continue;
+            let low=-1;for(let y=0;y<N;y++)if(g[y][x]&&y>topY+ry)low=y;
+            if(low>=0)g[low][x]=1;
+        }
+        for(const f of [-0.62,0,0.62]){   // tension rods
+            const x=Math.floor(cx+f*r),from=Math.ceil(topY+ry*Math.sqrt(1-f*f))+1;
+            for(let y=from;y<N;y++){const v=g[y][x];if(v===1||v===0||v===8)break;g[y][x]=v===7?6:v===6?5:1;}
+        }
+    };
+    const cymbal=(cx,y,r,standTo)=>{
+        for(let yy=y+1;yy<=standTo;yy++)g[yy][Math.floor(cx)]=1;   // the stand (the snare covers its foot)
+        const ry=r*0.32;
+        for(let yy=0;yy<N;yy++)for(let x=0;x<N;x++){
+            if(inE(x,yy,cx,y+1,r,ry))g[yy][x]=5;                          // underside along the front edge
+            if(inE(x,yy,cx,y,r,ry))g[yy][x]=x+.5-cx>r*0.35?7:8;           // top, a little darker to the right
+        }
+        for(let yy=0;yy<N;yy++)for(let x=0;x<N;x++)if(inE(x,yy,cx,y-0.6,1.6,0.9))g[yy][x]=7;   // the bell
+    };
+    cymbal(7,7,6,21);   // crash, back left
+    drum(21,19,6,9);    // floor tom, behind
+    drum(13,26,8,5);    // snare, in front
+    let minX=N,maxX=-1,minY=N,maxY=-1;
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(g[y][x]){minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
+    const shiftX=Math.round((N-(maxX-minX+1))/2)-minX,shiftY=Math.round((N-(maxY-minY+1))/2)-minY;
+    const centred=Array.from({length:N},()=>Array(N).fill(0));
+    for(let y=0;y<N;y++)for(let x=0;x<N;x++)if(g[y][x])centred[y+shiftY][x+shiftX]=g[y][x];
+    return centred;
+})();
+
 // Revised supplied preset pixels; sheet-wide shadow is generated separately.
 ICONS.IconTones=iconRows([
     '................................',
@@ -1128,7 +1298,7 @@ setInterval(()=>{
     }).catch(()=>{}).finally(()=>{noteGatePollBusy=false;});
 },100);
 
-const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37,UPDATE:38,AI_COMPARE:39,PHOTO:40,PHOTO_SCAN:41};
+const ScreenState={IDLE:0,MENU:1,VOICES_LIST:2,EDIT_VOICE:3,VOICE_CATEGORIES:8,SETTINGS:9,MESSAGES:10,AI_PROMPT:11,AI_GENERATING:12,AI_RESULT:13,AI_TUNE:14,DELETE_SAMPLE:15,AUDIO_OUTPUTS:16,LICENSE_STATUS:17,LICENSE_INPUT:18,LICENSE_CHECK:19,IMPORT_LOADING:22,IMPORT_CONFIRM:23,ROOT_TUNE:24,MESSAGE_ALERT:25,MESSAGE_DETAIL:26,MESSAGE_CHOICES:27,MESSAGE_SAVED:28,GAMES:29,SNAKE:30,BILLIARDS:31,MESSAGE_CHAT:32,RENAME_SAMPLE:33,DEMO_SETUP:34,AI_LICENSE:35,AI_OPTIONS:36,DEMO_MACRO:37,UPDATE:38,AI_COMPARE:39,PHOTO:40,PHOTO_SCAN:41,KIT_GEN:42,KIT_RESULT:43};
 // A plug-in always renders through its DAW; only standalone owns an output device.
 const IS_PLUGIN_HOST=Boolean(window.__JUCE__?.initialisationData?.isPluginHost);
 
@@ -1292,7 +1462,7 @@ window.addEventListener('blur',suspendHandsetGame);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)suspendHandsetGame();});
 let selectedMenuIndex = 0;
 let selectedVoiceIndex = 0;
-const voiceCategories = ['Generated','Uploaded'];
+const voiceCategories = ['Generated','Drum Kits','Uploaded'];
 let instrumentCategories = [];
 let instrumentGenerated = [];
 let selectedCategoryIndex = 0;
@@ -1329,7 +1499,7 @@ let pendingThumbs=(()=>{try{const value=JSON.parse(localStorage.getItem('photoTh
 let photoThumbs={...pendingThumbs},instrumentMeta=[];
 function rebuildSoundMeta(entries) {
     const thumbs={};
-    instrumentMeta=entries.map(item=>({thumb:typeof item.thumb==='string'?item.thumb:'',tag:typeof item.tag==='string'?item.tag:''}));
+    instrumentMeta=entries.map(item=>({thumb:typeof item.thumb==='string'?item.thumb:'',tag:typeof item.tag==='string'?item.tag:'',kit:parseKit(item.kit),mix:parseMix(item.mix)}));
     entries.forEach(item=>{
         const name=String(item.name);
         if(typeof item.thumb==='string'&&item.thumb)thumbs[name]=item.thumb;
@@ -1381,25 +1551,27 @@ function makePhotoThumb(tones) {
     return out;
 }
 function soundCategoryOf(index) {
+    if(kitInfo(index))return 'Drum Kits';
     return (instrumentCategories[index]||'Generated')==='Uploaded'?'Uploaded':'Generated';
 }
 // Newest sounds first (the engine lists them oldest first).
 function categoryBaseIndices() {
-    return instrumentList.map((_,i)=>i).filter(i => soundCategoryOf(i) === voiceCategories[selectedCategoryIndex]).reverse();
+    const reps=new Set(kitRepresentatives().values());   // a drum kit is one row: its first pad stands for it
+    return instrumentList.map((_,i)=>i).filter(i => soundCategoryOf(i) === voiceCategories[selectedCategoryIndex]&&(!kitInfo(i)||reps.has(i))).reverse();
 }
 function currentTabs() {
     if(voiceCategories[selectedCategoryIndex]!=='Generated')return ['All'];
-    const present=new Set(categoryBaseIndices().map(i=>soundTagOf(instrumentList[i])));
+    const present=new Set(categoryBaseIndices().map(soundTagAt));
     return ['All',...SOUND_TAGS.filter(tag=>present.has(tag)),...(present.has('Photos')?['Photos']:[])];
 }
 function categoryVoiceIndices() {
     const base=categoryBaseIndices();
     if(voiceCategories[selectedCategoryIndex]!=='Generated')return base;
     if(!currentTabs().includes(selectedTag))selectedTag='All';
-    return selectedTag==='All'?base:base.filter(i=>soundTagOf(instrumentList[i])===selectedTag);
+    return selectedTag==='All'?base:base.filter(i=>soundTagAt(i)===selectedTag);
 }
 function currentCategoryRows() {
-    return categoryVoiceIndices().map(i=>({index:i,name:instrumentList[i]}));
+    return categoryVoiceIndices().map(i=>({index:i,name:kitInfo(i)?(kitInfo(i).name||'Drum')+' Kit':instrumentList[i]}));
 }
 function setTag(index,direction) {
     const tabs=currentTabs(),at=Math.max(0,tabs.indexOf(selectedTag));
@@ -1432,6 +1604,18 @@ async function categorizeSounds() {
     if(currentState===ScreenState.VOICES_LIST)render();
 }
 function activeVoiceIndex() { return selectedVoiceIndex; }
+// The folders screen opens on the folder of the sound that is selected (a drum kit is shown by its first pad, and its
+// folder is Drum Kits), and a tag filter that would hide that sound is lifted.
+function openVoiceFolders() {
+    if (instrumentList.length) {
+        const info=kitInfo(selectedVoiceIndex),rep=info?kitRepresentatives().get(info.id):undefined;
+        if (rep!==undefined) selectedVoiceIndex=rep;
+        const folder=voiceCategories.indexOf(soundCategoryOf(selectedVoiceIndex));
+        if (folder>=0) selectedCategoryIndex=folder;
+        if (voiceCategories[selectedCategoryIndex]==='Generated'&&selectedTag!=='All'&&soundTagAt(selectedVoiceIndex)!==selectedTag) selectedTag='All';
+    }
+    currentState=ScreenState.VOICE_CATEGORIES;render();
+}
 function stepCategoryVoice(direction) {
     const indices=categoryVoiceIndices();
     if (!indices.length) return;
@@ -1464,6 +1648,7 @@ let editCommitPending=false, pendingEditorControls=null;
 const MENU_PAGES = [
     {title:'Voices',icon:ICONS.IconTones},
     {title:'Neural Synthesis',kind:'ai',icon:ICONS.IconAiSample},
+    {title:'Drum Kit',icon:ICONS.IconDrumKit},
     {title:'Capture',icon:ICONS.IconCamera},
     {title:'Messages',icon:ICONS.IconMessages},
     {title:'Games',icon:ICONS.IconGames},
@@ -1667,7 +1852,7 @@ async function flushFeedbackOutbox(){
     if(messageStore.outbox.length)feedbackRetryTimer=setTimeout(flushFeedbackOutbox,60_000);
 }
 function generatedVoice(){return !!instrumentGenerated[selectedVoiceIndex];}
-function editRowCount(){return 1+1+EDIT_PARAMETERS.length+1+(generatedVoice()&&!importDraft&&!demoMode?2:0);}
+function editRowCount(){if(editKitPad())return 4+EDIT_PARAMETERS.length;return 1+1+EDIT_PARAMETERS.length+1+(generatedVoice()&&!importDraft&&!demoMode?2:0);}
 
 const aiPromptInput=document.getElementById('ai-prompt-input');
 const licenseCodeInput=document.getElementById('license-code-input');
@@ -1719,13 +1904,61 @@ async function openUpdatePage(){
     if(!opened&&await checkForUpdates(true)&&updateInfo.newer)opened=unwrapNativeResult(await fn().catch(()=>false))===true;
     updateMessage=opened?'Opened in browser':'Try again later';render();
 }
+// "New version" with the running and the new version side by side (old one in the mid tone, an arrow, the new one in
+// ink), the release note under it and Get / Later. It opens by itself once per new version (announceUpdate) and from
+// Settings > Account > Update.
+let updateReturnState=ScreenState.SETTINGS;
+function drawUpdateArrow(x,y){
+    ctx.fillStyle=getColor(1);
+    ctx.fillRect(x,y+3,5,1);
+    for(let i=0;i<3;i++)ctx.fillRect(x+6-i,y+3-i,1,1+2*i);   // a small solid head, 3 px deep
+}
 function renderUpdate(){
     clearScreen();drawListTitle('Update');
-    drawStringInkCentered(15,'v'+updateInfo.latest,FONTS.Display,1);
-    if(updateInfo.notes)drawStringCentered(30,fitTextWithEllipsis(updateInfo.notes,88,FONTS.Regular),FONTS.Regular,1);
-    drawStringCentered(42,updateChecking?'Checking':updateMessage||('Now v'+(updateInfo.current||'?')),FONTS.Regular,1);
-    drawSoftkeys(updateChecking?'':'Get','Back');
+    drawStringCentered(13,'New version',FONTS.Regular,1);
+    const from=updateInfo.current||'?',to=updateInfo.latest||'?',font=FONTS.Display;
+    const wFrom=measureString(from,font),wTo=measureString(to,font),arrow=7,gap=4;
+    const x0=Math.floor((96-(wFrom+gap+arrow+gap+wTo))/2),y=24;
+    drawString(x0,y,from,font,2);
+    drawUpdateArrow(x0+wFrom+gap,y+1);
+    drawString(x0+wFrom+gap+arrow+gap,y,to,font,1);
+    const status=updateChecking?'Checking':updateMessage;
+    const lines=status?[status]:updateInfo.notes?wrapBitmapText(updateInfo.notes,88,2):[];
+    lines.forEach((line,i)=>drawStringCentered(39+i*9,line,FONTS.Regular,1));
+    drawSoftkeys(updateChecking?'':'Get','Later');
 }
+// A found update shows itself at most once per launch, only on a resting screen (home or the menu), never over work,
+// and only while Messages are on (Settings). Leaving it (Later, Back, or Get) keeps it quiet for the next two launches;
+// a newer version than the one put off shows again at once.
+// A "launch" is one run of the app (or one load of the plug-in into the DAW): the native side hands out an id that
+// stays the same while the plug-in window is closed and opened again, so reopening the window counts for nothing.
+let updateSnooze=(()=>{try{const v=JSON.parse(localStorage.getItem('2g.updateSnooze')||'null');return v&&typeof v==='object'?v:{version:'',left:0};}catch(_){return {version:'',left:0};}})();
+let updateLaunchId='';
+(async()=>{
+    let id='web';
+    try{const fn=window.__JUCE__?.backend?.getNativeFunction?.('getStartupStatus');if(fn)id=String(unwrapNativeResult(await fn()).launchId||'');}catch(_){}
+    if(!id)return;   // an older native side without launch ids: never count, never announce
+    let last='';try{last=localStorage.getItem('2g.lastLaunch')||'';}catch(_){}
+    if(last!==id){
+        if(updateSnooze.left>0)updateSnooze.left--;   // one launch has passed: count it off the quiet ones
+        try{localStorage.setItem('2g.lastLaunch',id);localStorage.setItem('2g.updateSnooze',JSON.stringify(updateSnooze));}catch(_){}
+    }
+    updateLaunchId=id;
+})();
+const updateShownThisLaunch=()=>{try{return localStorage.getItem('2g.updateShownLaunch')===updateLaunchId;}catch(_){return true;}};
+function snoozeUpdate(){
+    updateSnooze={version:updateInfo.latest,left:2};
+    try{localStorage.setItem('2g.updateSnooze',JSON.stringify(updateSnooze));}catch(_){}
+}
+function announceUpdate(){
+    if(!updateLaunchId||!updateInfo.newer||!updateInfo.latest||updateShownThisLaunch()||!phoneSettings.messages)return;
+    if(updateSnooze.version===updateInfo.latest&&updateSnooze.left>0)return;
+    if(![ScreenState.IDLE,ScreenState.MENU].includes(currentState))return;
+    try{localStorage.setItem('2g.updateShownLaunch',updateLaunchId);}catch(_){}
+    if(currentState===ScreenState.IDLE)cancelMenuOpen();
+    updateReturnState=currentState;updateMessage='';currentState=ScreenState.UPDATE;render();
+}
+setInterval(announceUpdate,4000);
 let licenseChecked=false; // the first answer from the server has arrived
 function setLicenseData(data){
     const selected=phoneSettingIds()[settingsRow];
@@ -1885,7 +2118,7 @@ function renderAiOptions(){
 // Only when the server says no code is saved; before its first answer (or offline) the prompt opens as usual.
 function licenseNeedsCode(){return !demoMode&&licenseChecked&&licenseData.status==='unlicensed';}
 function openNeuralSynthesis(){
-    aiError='';photoAfterLicense=false;
+    kitPromptMode=false;aiError='';photoAfterLicense=false;
     if(licenseNeedsCode()){currentState=ScreenState.AI_LICENSE;render();return;}
     currentState=ScreenState.AI_PROMPT;render();focusAiPrompt();
 }
@@ -1895,7 +2128,7 @@ function renderAiLicense(){
     drawSoftkeys('License','Back');
 }
 function leaveSoundMaker(){
-    currentState=ScreenState.MENU;aiError='';aiPromptInput.blur();render();
+    kitPromptMode=false;currentState=ScreenState.MENU;aiError='';aiPromptInput.blur();render();
 }
 aiPromptInput.addEventListener('blur',()=>setTimeout(()=>{if(currentState===ScreenState.AI_PROMPT||currentState===ScreenState.DEMO_MACRO)aiPromptInput.focus();},0));
 window.addEventListener('focus',()=>{if(currentState===ScreenState.AI_PROMPT)focusAiPrompt();else if(currentState===ScreenState.DEMO_MACRO)promptField.focus();});
@@ -2107,6 +2340,7 @@ function emitJuce(name, data) {
     try {
         if (window.__JUCE__ && window.__JUCE__.backend && typeof window.__JUCE__.backend.emitEvent === 'function') {
             window.__JUCE__.backend.emitEvent(name, data);
+            if ((name === 'selectVoice' || name === 'previewVoice') && data && typeof kitFollowVoice === 'function') kitFollowVoice(data.index);
         }
     } catch(e) {}
 }
@@ -2133,6 +2367,7 @@ function extractInstruments(raw) {
     return null;
 }
 
+let startupPicked=false;
 function applyInstrumentLibrary(raw) {
     const parsed = extractInstruments(raw);
     if (!parsed) return false;
@@ -2142,6 +2377,16 @@ function applyInstrumentLibrary(raw) {
     const previous=selectedVoiceIndex;
     selectedVoiceIndex=Math.max(0,Math.min(Number.isInteger(library?.selectedIndex)?library.selectedIndex:selectedVoiceIndex,Math.max(0,instrumentList.length-1)));
     if(Number.isInteger(library?.selectedIndex))selectedCategoryIndex=Math.max(0,voiceCategories.indexOf(soundCategoryOf(selectedVoiceIndex)));
+    if(!startupPicked&&instrumentList.length){
+        startupPicked=true;
+        if(!(library?.selectedIndex>0)){
+            const reps=new Set(kitRepresentatives().values());
+            for(let i=instrumentList.length-1;i>=0;i--)if(['Generated','Drum Kits'].includes(soundCategoryOf(i))&&(!kitInfo(i)||reps.has(i))){
+                selectedVoiceIndex=i;selectedCategoryIndex=Math.max(0,voiceCategories.indexOf(soundCategoryOf(i)));
+                emitJuce('selectVoice',{index:i});break;
+            }
+        }
+    }
     if(previous!==selectedVoiceIndex&&[ScreenState.EDIT_VOICE,ScreenState.ROOT_TUNE].includes(currentState))loadEditValues();
     syncSoundMeta();
     scheduleCategorize();
@@ -2830,11 +3075,11 @@ function wrapBitmapText(text,maxWidth,maxLines,font=FONTS.Regular) {
     }
     return lines.slice(0,maxLines);
 }
-function drawSoundMakerHeader(){
+function drawSoundMakerHeader(forcedTitle=''){
     const credits=licenseData.unlimited?'INF':Number.isInteger(licenseData.credits)?String(Math.max(0,licenseData.credits)):'-';
     const font=FONTS.Regular;
     const numberX=82-measureString(credits,font);
-    const title=measureString('Neural Synthesis',font)<=numberX-6?'Neural Synthesis':'Neural Synth';
+    const title=forcedTitle||(measureString('Neural Synthesis',font)<=numberX-6?'Neural Synthesis':'Neural Synth');
     drawString(3,1,title,font,1);
     drawString(numberX,1,credits,font,1);
     // Credits mark: a thin four-point spark, one colour, the same shape as the Generated icon.
@@ -2844,13 +3089,13 @@ function drawSoundMakerHeader(){
     drawHLine(3,10,90,1);
 }
 function renderAiPrompt() {
-    clearScreen();drawSoundMakerHeader();
+    clearScreen();drawSoundMakerHeader(kitPromptMode?'Drum Kit':'');
     promptField.draw({left:5,top:14,width:82,lines:4,lineHeight:9});
     drawFieldScrollbar(promptField,91,13,37,4);
     const limit=promptField.limit(),used=aiPromptInput.value.length;
     // The counter only appears when the limit is close. Back while the prompt is empty, Options once it has text.
     if(limit-used<=40)drawFieldCount(used+'/'+limit,limit-used<=10);
-    drawSoftkeys('Make',used?'Options':'Back');
+    drawSoftkeys('Make',used&&!kitPromptMode?'Options':'Back');
 }
 function renderRenameSample() {
     clearScreen();drawListTitle('Rename');
@@ -3284,6 +3529,447 @@ function roomLight(px,py,pz,nx,ny,nz,power,both) {
     if(both)facing=Math.abs(facing);
     return facing>0?power*facing/((d2+0.3)*(1+0.25*d2)):0;
 }
+// ---- Drum Kit -------------------------------------------------------------------------------------------------
+// One description makes a whole kit: kick, snare, hi-hat and a percussion voice the server chooses (generateDrumKit,
+// two credits). The menu goes straight to the prompt screen (the same editor as Neural Synthesis). While the kit is
+// made the whole LCD is a small stage: four floor toms, two in front and two behind, and bits (0 and 1) raining onto
+// them. Each bit bounces once on a head, drops to the floor and stays there as a flattened remnant. When the four
+// sounds are installed (saved in Voices at once) four tall pads appear, one picture each, and the engine plays them
+// as a kit from MIDI notes (GM drums or 36-39, see Settings > Sound > Drums).
+const KIT_PADS=['KICK','SNARE','HAT','PERC'];
+const KIT_ICON_KEYS=['kick','snare','hihat'];
+const KIT_PERC_TYPES=['tambourine','conga','pad'];
+// Notes the pads answer to: General MIDI drums (kick, snare, closed hat, clap) or four neighbouring notes.
+const KIT_NOTE_NAMES=['C','D','E','F'];   // every C is the kick, every D the snare, every E the hat, every F the percussion
+const KIT_X0=2,KIT_PITCH=23,KIT_TOP=2,KIT_BOTTOM=59,KIT_STRIP_TOP=47,KIT_WIDTHS=[24,24,24,23];   // 2 px of air left, right and above
+// The pad notes: General MIDI drums, or four neighbouring notes (Settings > Sound > Drums).
+const KIT_NOTES=[36,38,40,41];
+let kit={focus:0,perc:0,sim:null,prompt:'',error:'',indices:null,percName:'',id:'',name:'',from:'make'};
+let kitPromptMode=false,kitLastDraw=0,kitSerial=0;
+// 3 x 7 block capitals for the pad names (22 px is all one pad has), 3 x 5 for the note names.
+const KIT_BLOCK_GLYPHS={
+    A:'010 101 101 111 101 101 101',C:'111 100 100 100 100 100 111',E:'111 100 100 111 100 100 111',
+    H:'101 101 101 111 101 101 101',I:'111 010 010 010 010 010 111',K:'101 101 110 110 101 101 101',
+    N:'101 111 111 111 111 101 101',P:'111 101 101 111 100 100 100',R:'110 101 101 110 110 101 101',
+    S:'111 100 100 111 001 001 111',T:'111 010 010 010 010 010 010','-':'0 0 0 1 0 0 0'
+};
+const KIT_NOTE_GLYPHS={
+    C:'011 100 100 100 011',D:'110 101 101 101 110',E:'111 100 110 100 111',F:'111 100 110 100 100',
+    G:'011 100 101 101 011',A:'010 101 111 101 101',B:'110 101 110 101 110','#':'0101 1111 0101 1111 0101',
+    '1':'010 110 010 010 111'
+};
+const kitGlyphs=(table,text)=>Array.from(text,ch=>(table[ch]||'0').split(' '));
+const kitTextWidth=(table,text)=>{const g=kitGlyphs(table,text);return g.reduce((w,rows)=>w+rows[0].length,0)+Math.max(0,g.length-1);};
+function drawKitText(table,text,x,y,tone){
+    ctx.fillStyle=getColor(tone);
+    for(const rows of kitGlyphs(table,text)){
+        rows.forEach((row,r)=>{for(let c=0;c<row.length;c++)if(row[c]==='1')ctx.fillRect(x+c,y+r,1,1);});
+        x+=rows[0].length+1;
+    }
+}
+// A tone is a mix of the ink and the paper of the active palette (0 = ink, 1 = paper).
+function kitShade(t){
+    const rgb=hex=>[1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)),ink=rgb(getColor(1)),paper=rgb(getColor(0));
+    return 'rgb('+ink.map((v,i)=>Math.round(v+(paper[i]-v)*t)).join(',')+')';
+}
+function drawKitSprite(rows,x,y){
+    const colours={};
+    rows.forEach((row,r)=>{
+        for(let c=0;c<row.length;c++){
+            const ch=row[c];if(ch==='.')continue;
+            ctx.fillStyle=colours[ch]||(colours[ch]=kitShade(KIT_TONES[ch]));ctx.fillRect(x+c,y+r,1,1);
+        }
+    });
+}
+const kitPadX=index=>KIT_X0+index*KIT_PITCH;
+const kitMapNumber=()=>0;
+const kitPadSprite=index=>kit.indices&&kit.indices[index]==null?null:index<3?KIT_ICONS[KIT_ICON_KEYS[index]]:KIT_ICONS[KIT_PERC_TYPES[kit.perc]];
+// Four tall pads side by side sharing their borders: the note at the top inside the pad, the picture in the middle,
+// the name in the strip at the bottom (filled for the pad in focus). No hover effects.
+function drawKitBoard(sprites){
+    const notes=KIT_NOTE_NAMES;
+    for(let i=0;i<4;i++){
+        const x=kitPadX(i),w=KIT_WIDTHS[i],inner=w-2,focused=i===kit.focus;
+        ctx.fillStyle=getColor(1);
+        ctx.fillRect(x,KIT_TOP,w,1);ctx.fillRect(x,KIT_BOTTOM,w,1);
+        ctx.fillRect(x,KIT_TOP,1,KIT_BOTTOM-KIT_TOP+1);ctx.fillRect(x+w-1,KIT_TOP,1,KIT_BOTTOM-KIT_TOP+1);
+        ctx.fillRect(x,KIT_STRIP_TOP,w,1);
+        if(focused)ctx.fillRect(x+1,KIT_STRIP_TOP+1,inner,KIT_BOTTOM-KIT_STRIP_TOP-1);
+        drawKitText(KIT_NOTE_GLYPHS,notes[i],x+1+Math.floor((inner-kitTextWidth(KIT_NOTE_GLYPHS,notes[i]))/2),KIT_TOP+5,focused?1:2);
+        const name=KIT_PADS[i];
+        drawKitText(KIT_BLOCK_GLYPHS,name,x+1+Math.floor((inner-kitTextWidth(KIT_BLOCK_GLYPHS,name))/2),KIT_STRIP_TOP+3,focused?0:1);
+        if(sprites[i])drawKitSprite(sprites[i],x+Math.round((w-20)/2),20);
+        else if(kit.indices&&kit.indices[i]==null){   // a missing pad: three dots, moving while it is being made
+            const busy=kitReroll.busy&&kitReroll.pad===i,lit=Math.floor(performance.now()/350)%3;
+            for(let d=0;d<3;d++){ctx.fillStyle=getColor(busy&&d!==lit?2:1);ctx.fillRect(x+Math.floor(w/2)-4+d*3,29,2,2);}
+        }
+        addLcdTarget(x,KIT_TOP,w,KIT_BOTTOM-KIT_TOP+1,()=>kitPressPad(i));
+    }
+}
+function kitMoveFocus(direction){kit.focus=(kit.focus+direction+4)%4;render();}
+// The engine plays the kit while it is "on": choosing another voice (or deleting a sound) turns it off, so it is
+// switched on again whenever a pad is played from here, and when the map changes in Settings.
+function kitSyncEngine(){if(kit.indices)emitJuce('setDrumKit',kitEngineArgs(kit.indices));}
+// Level (0-100, 80 = the sound as it is) and pan (-50..50) of a pad live in its sound's file as "level,pan".
+function parseMix(text){
+    const m=/^(\d{1,3}),(-?\d{1,2})$/.exec(typeof text==='string'?text:'');
+    return m?{level:Math.min(100,Number(m[1])),pan:Math.max(-50,Math.min(50,Number(m[2])))}:{level:80,pan:0};
+}
+const kitMixOf=index=>(instrumentMeta[index]&&instrumentMeta[index].mix)||{level:80,pan:0};
+function kitEngineArgs(indices){
+    const pads=indices.map(i=>Number.isInteger(i)?i:-1);   // -1: that pad is silent
+    return {indices:pads,map:kitMapNumber(),levels:pads.map(i=>kitMixOf(i).level),pans:pads.map(i=>kitMixOf(i).pan)};
+}
+// Choosing a kit (or any of its sounds) in Voices makes the engine play the whole kit from the keys, not only the one
+// sound at middle C: every voice choice that lands on a kit pad switches the kit on again right after it.
+function kitFollowVoice(index){
+    const info=kitInfo(index),members=info?kitMembers(info.id):null;
+    if(members)emitJuce('setDrumKit',kitEngineArgs(members));
+}
+function kitHit(pad){
+    kit.focus=pad;
+    if(kit.indices&&kit.indices[pad]==null){render();return;}   // a missing pad has nothing to play
+    kitSyncEngine();
+    const note=KIT_NOTES[pad];
+    emitJuce('noteOn',{note,velocity:.9});
+    setTimeout(()=>emitJuce('noteOff',{note}),90);
+    render();
+}
+function kitPressPad(index){if(currentState===ScreenState.KIT_RESULT)kitHit(index);}
+// The description is written on the same screen as Neural Synthesis; it only differs in what Make does.
+function openKitPrompt(){
+    aiError='';kit.sim=null;kit.error='';kitPromptMode=true;
+    if(licenseNeedsCode()){currentState=ScreenState.AI_LICENSE;render();return;}
+    currentState=ScreenState.AI_PROMPT;render();focusAiPrompt();
+}
+// Make: one request, two credits. The stage plays while the server writes four captions and makes four sounds; the
+// result screen follows as soon as the sounds are installed (they are saved in Voices straight away).
+function startKit(){
+    const text=aiPromptInput.value.trim().slice(0,450);
+    if(!text)return;
+    aiPrompt=text;kitPromptMode=false;aiPromptInput.blur();
+    kit.prompt=text;kitBegin();
+}
+function kitBegin(){
+    kit.focus=0;kit.error='';kit.indices=null;
+    const now=performance.now();
+    kit.sim={start:now,last:now,balls:[],next:0,pile:new Map()};
+    currentState=ScreenState.KIT_GEN;render();
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('generateDrumKit');
+    const serial=++kitSerial;
+    if(!fn){kit.error='Engine offline';render();return;}
+    fn(kit.prompt,{enhance:phoneSettings.enhancePrompt,drumMap:kitMapNumber()}).then(raw=>{
+        if(serial!==kitSerial)return;
+        const result=unwrapNativeResult(raw);
+        if(!result.ok||!Array.isArray(result.indices)||result.indices.length!==4){kit.error=result.error||'Generation failed - try again';render();return;}
+        kit.indices=result.indices.map(Number);selectedVoiceIndex=kit.indices[0];
+        kit.perc=kitPercIndex(result.percType);
+        kit.percName=String(result.percName||'');
+        kit.id=String(result.kitId||'');kit.name=kit.prompt.slice(0,28);kit.percType=String(result.percType||'pad');kit.from='make';
+        refreshSoundMakerCredits(true);
+    }).catch(()=>{if(serial===kitSerial){kit.error='Generation failed - try again';render();}});
+}
+// ---- saved kits -------------------------------------------------------------------------------------------------
+// The four sounds of a kit are ordinary saved sounds that carry "<id>|<pad>|<percussion picture>|<name>" in their own
+// file (item.kit in the library). Voices shows them as ONE row (the first pad stands for the kit); opening it shows
+// the kit screen. Edit there opens the usual editor for the pad in focus.
+function parseKit(text){
+    if(typeof text!=='string')return null;
+    const parts=text.split('|');
+    if(parts.length<4||!/^[0-9a-f]{6,12}$/i.test(parts[0]))return null;
+    const role=Number(parts[1]);
+    if(!Number.isInteger(role)||role<0||role>3)return null;
+    return {id:parts[0],role,perc:parts[2],name:parts.slice(3).join('|')};
+}
+function kitInfo(index){return (instrumentMeta[index]&&instrumentMeta[index].kit)||null;}
+function soundTagAt(index){return soundTagOf(instrumentList[index]);}
+// kit id -> the sound that stands for it in lists (the lowest pad that still exists)
+function kitRepresentatives(){
+    const reps=new Map();
+    for(let i=0;i<instrumentList.length;i++){
+        const info=kitInfo(i);if(!info)continue;
+        const current=reps.get(info.id);
+        if(current===undefined||kitInfo(current).role>info.role)reps.set(info.id,i);
+    }
+    return reps;
+}
+function kitPresent(id){const found=[];for(let i=0;i<instrumentList.length;i++)if(kitInfo(i)&&kitInfo(i).id===id)found.push(i);return found;}
+// The four pads in order (null for a pad whose sound is gone), or null when the kit has no sound left at all.
+function kitMembers(id){
+    const members=[null,null,null,null];
+    for(const i of kitPresent(id))members[kitInfo(i).role]=i;
+    return members.some(index=>index!==null)?members:null;
+}
+// A picture the page does not have (an older server's triangle or shaker) is shown as the nearest one it has.
+function kitPercIndex(type){
+    const at=KIT_PERC_TYPES.indexOf(type);
+    return at>=0?at:(type==='triangle'||type==='maracas')?0:KIT_PERC_TYPES.length-1;
+}
+function openSavedKit(index){
+    const info=kitInfo(index),members=info?kitMembers(info.id):null;
+    if(!members)return false;
+    kit.id=info.id;kit.name=info.name;kit.indices=members;kit.perc=kitPercIndex(info.perc);kit.percType=info.perc;kit.focus=0;kit.from='list';
+    currentState=ScreenState.KIT_RESULT;kitSyncEngine();render();return true;
+}
+function kitLeaveToList(){
+    const rep=kitRepresentatives().get(kit.id);
+    if(rep!==undefined)selectedVoiceIndex=rep;
+    selectedCategoryIndex=Math.max(0,voiceCategories.indexOf('Drum Kits'));
+    currentState=ScreenState.VOICES_LIST;render();
+}
+// Edit: the usual sample editor for the pad in focus (a kit pad has Volume and Pan rows on top); Back returns here.
+function kitEdit(){
+    if(!kit.indices)return;
+    if(kit.indices[kit.focus]==null){kitRerollPad(kit.focus);return;}   // Make: a new sound for the missing pad
+    selectedVoiceIndex=kit.indices[kit.focus];
+    selectedCategoryIndex=Math.max(0,voiceCategories.indexOf('Drum Kits'));
+    emitJuce('selectVoice',{index:selectedVoiceIndex});
+    openSampleEditor(ScreenState.KIT_RESULT);
+}
+// Volume and pan of a pad (absolute values), kept in the sound's own file once the keys rest, and heard at once.
+let kitMixTimer=0,kitPreviewAt=0;
+function kitSetMix(index,change){
+    const info=kitInfo(index),members=info?kitMembers(info.id):null;if(!members)return;
+    const meta=instrumentMeta[index]||(instrumentMeta[index]={thumb:'',tag:''}),mix={...kitMixOf(index),...change};
+    mix.level=Math.max(0,Math.min(100,Math.round(mix.level)));mix.pan=Math.max(-50,Math.min(50,Math.round(mix.pan)));
+    meta.mix=mix;
+    clearTimeout(kitMixTimer);
+    kitMixTimer=setTimeout(()=>{
+        const fn=window.__JUCE__?.backend?.getNativeFunction?.('setSoundMeta');
+        if(fn)fn(index,{mix:mix.level+','+mix.pan});
+    },400);
+    emitJuce('setDrumKit',kitEngineArgs(members));   // silent: only Play (Enter) sounds the pad
+    render();
+}
+function kitPreview(index){
+    const info=kitInfo(index),members=info?kitMembers(info.id):null;if(!members)return;
+    emitJuce('setDrumKit',kitEngineArgs(members));
+    const note=KIT_NOTES[info.role];
+    emitJuce('noteOn',{note,velocity:.9});
+    setTimeout(()=>emitJuce('noteOff',{note}),90);
+}
+// Reroll: a new take of this pad (one credit). The server writes a caption about a fifth different from the kit's style;
+// the new sound replaces the old one (same name, kit and mix) and plays once when it arrives.
+let kitReroll={busy:false,msg:'',timer:0};
+function kitRerollSay(text){
+    kitReroll.msg=text;clearTimeout(kitReroll.timer);
+    kitReroll.timer=setTimeout(()=>{kitReroll.msg='';if(currentState===ScreenState.EDIT_VOICE||currentState===ScreenState.KIT_RESULT)render();},2600);render();
+}
+function kitRerollPad(missingPad){
+    if(kitReroll.busy)return;
+    const fill=Number.isInteger(missingPad);
+    const index=fill?-1:selectedVoiceIndex;
+    const info=fill?{id:kit.id,role:missingPad,perc:kit.percType||'pad',name:kit.name}:kitInfo(index);
+    if(!info||!info.id||!info.name)return;
+    kitReroll.pad=info.role;
+    if(licenseNeedsCode()){kitRerollSay('Needs licence');return;}
+    const fn=window.__JUCE__?.backend?.getNativeFunction?.('rerollKitPad');
+    if(!fn){kitRerollSay('Engine offline');return;}
+    kitReroll.busy=true;kitReroll.msg='';render();
+    const tick=setInterval(()=>{if(kitReroll.busy&&(currentState===ScreenState.EDIT_VOICE||currentState===ScreenState.KIT_RESULT))render();},350);
+    const mix=kitMixOf(index);
+    const role=['Kick','Snare','Hat','Perc'][info.role];
+    const soundName=fill?(info.name.slice(0,Math.max(0,21-role.length)).trim()+' '+role):(instrumentList[index]||info.name);
+    fn(info.name,{enhance:phoneSettings.enhancePrompt,pad:info.role,index,kit:[info.id,info.role,info.perc,info.name].join('|'),
+        mix:mix.level+','+mix.pan,name:soundName}).then(async raw=>{
+        const result=unwrapNativeResult(raw);
+        if(!result.ok){kitReroll.busy=false;kitRerollSay(result.error||'Failed - try again');return;}
+        refreshSoundMakerCredits(true);
+        try{applyInstrumentLibrary(await window.__JUCE__.backend.getNativeFunction('getInstruments')());}catch(_){}
+        kitReroll.busy=false;
+        const members=kitMembers(info.id);
+        if(members){
+            kit.indices=members;
+            if(members[info.role]!=null)selectedVoiceIndex=members[info.role];
+            if(currentState===ScreenState.EDIT_VOICE){editSliders.dataset.signature='';loadEditValues();}
+            emitJuce('setDrumKit',kitEngineArgs(members));
+            kitPreviewAt=0;kitPreview(members[info.role]);
+        }
+        render();
+    }).catch(()=>{kitReroll.busy=false;kitRerollSay('Failed - try again');}).finally(()=>clearInterval(tick));
+}
+const editKitPad=()=>!!kitInfo(selectedVoiceIndex)&&generatedVoice()&&!importDraft;
+// Back from the editor: the numbers may have moved (a pad renamed, deleted); look the pads up again, and a kit that
+// lost a pad goes back to the list.
+function kitAfterEdit(){
+    const members=kit.id?kitMembers(kit.id):null;
+    if(!members){kit.indices=null;selectedCategoryIndex=Math.max(0,voiceCategories.indexOf('Drum Kits'));currentState=ScreenState.VOICES_LIST;return;}
+    kit.indices=members;kitSyncEngine();
+}
+// ---- the stage ---------------------------------------------------------------------------------------------------
+// World units are LCD pixels at the depth of the front toms: X across, Z into the screen, H up from the floor.
+// Things Z deep are drawn 1/(1+Z/40) as big. There is no visible floor: sparks that land simply lie where they fell.
+const KIT_STEP_MS=66;   // the stage is drawn at 15 fps
+const KIT_MIN_MS=1500,KIT_HORIZON=22,KIT_FOCAL=48,KIT_GRAVITY=700;
+const KIT_STAGE_TOMS=[
+    {X:-30,Z:14,back:true,rx:12,rz:5.5,head:16.5},{X:30,Z:14,back:true,rx:12,rz:5.5,head:16.5},
+    {X:-13,Z:0,rx:12,rz:5.5,head:22},{X:13,Z:0,rx:12,rz:5.5,head:22}
+];
+KIT_STAGE_TOMS.forEach(tom=>{tom.h=tom.head*(1+tom.Z/40);});   // head height in world units (a sprite is drawn at fixed pixel size)
+function kitProject(X,Z,H){const s=1/(1+Z/40);return [48+X*s,KIT_HORIZON+KIT_FOCAL*s-H*s,s];}
+function kitSpawn(sim){
+    let X,Z;
+    if(Math.random()<.8){const tom=KIT_STAGE_TOMS[Math.floor(Math.random()*4)];X=tom.X+(Math.random()*2-1)*tom.rx*.8;Z=tom.Z+(Math.random()*2-1)*tom.rz*.8;}
+    else{X=Math.random()*90-45;Z=Math.random()*30;}
+    sim.balls.push({X,Z,H:80,vx:0,vz:0,vh:-40-Math.random()*80,bounced:false,landed:false,level:0,digit:Math.random()<.5?0:1});
+}
+const kitTomReach=(b,tom)=>((b.X-tom.X)/tom.rx)**2+((b.Z-tom.Z)/tom.rz)**2;
+// A spark that reaches the floor settles in a cell of the floor grid; a full cell makes it slide to a lower
+// neighbour, so the sparks pile up like sand and the pile gets taller where they keep falling.
+function kitSettle(sim,b){
+    let cx=Math.round(b.X/3),cz=Math.round(b.Z/3);
+    const count=(x,z)=>sim.pile.get(x+','+z)||0;
+    for(let i=0;i<6;i++){
+        const here=count(cx,cz);if(here<2)break;
+        const options=[[cx-1,cz],[cx+1,cz],[cx,cz-1],[cx,cz+1]].filter(([x,z])=>count(x,z)<here-1&&z>=0);
+        if(!options.length)break;
+        [cx,cz]=options[Math.floor(Math.random()*options.length)];
+    }
+    b.level=Math.min(4,count(cx,cz));b.cell=cx+','+cz;sim.pile.set(b.cell,count(cx,cz)+1);
+    b.X=cx*3+Math.floor(Math.random()*3)-1;b.Z=Math.max(0,cz*3);b.H=0;b.vx=b.vz=b.vh=0;b.landed=true;kitClearOfToms(b);
+}
+function kitClearOfToms(b){
+    for(let pass=0;pass<2;pass++)for(const tom of KIT_STAGE_TOMS){
+        if(b.Z<=tom.Z)continue;
+        const sprite=tom.back?KIT_ICONS.tomBack:KIT_ICONS.tomFront,width=sprite[0].length,[tx,floorY]=kitProject(tom.X,tom.Z,0);
+        const left=Math.round(tx)-width/2,top=Math.round(floorY)-sprite.length+1,[x,y,s]=kitProject(b.X,b.Z,0);
+        if(x<left-2||x>left+width+2||y<top||y>floorY+1)continue;
+        const out=x<tx?left-3:left+width+3;b.X=(out-48)/s;
+    }
+}
+function kitStep(sim,dt){
+    sim.next-=dt;
+    if(sim.next<=0){
+        if(sim.balls.length>=48){   // a long wait: the oldest remnant makes room
+            const old=sim.balls.findIndex(b=>b.landed);
+            if(old>=0){const gone=sim.balls.splice(old,1)[0];sim.pile.set(gone.cell,Math.max(0,(sim.pile.get(gone.cell)||1)-1));}
+        }
+        if(sim.balls.length<48)kitSpawn(sim);
+        sim.next=.09+Math.random()*.1;
+    }
+    for(const b of sim.balls){
+        if(b.landed)continue;
+        const previousH=b.H;
+        b.vh-=KIT_GRAVITY*dt;b.H+=b.vh*dt;b.X+=b.vx*dt;b.Z+=b.vz*dt;
+        for(const tom of KIT_STAGE_TOMS){
+            const reach=kitTomReach(b,tom);
+            if(reach>1)continue;
+            if(previousH>=tom.h-.01&&b.H<tom.h){
+                b.H=tom.h;
+                if(!b.bounced){   // the one bounce: up a little and away from the middle of the head
+                    let dx=(b.X-tom.X)/tom.rx,dz=(b.Z-tom.Z)/tom.rz;const length=Math.hypot(dx,dz);
+                    if(length<.05){const angle=Math.random()*Math.PI*2;dx=Math.cos(angle);dz=Math.sin(angle);}else{dx/=length;dz/=length;}
+                    const push=80+Math.random()*40;
+                    b.vh=Math.abs(b.vh)*.5;b.vx=dx*push;b.vz=dz*push*.5;b.bounced=true;
+                }else{   // already bounced: it slides off the edge, speeding up outwards so it cannot stay on a head
+                    b.vh=0;let dx=(b.X-tom.X)/tom.rx,dz=(b.Z-tom.Z)/tom.rz;
+                    if(!dx&&!dz)dx=1;
+                    const length=Math.hypot(dx,dz);b.vx+=dx/length*600*dt;b.vz+=dz/length*360*dt;
+                }
+            }else if(b.H<tom.h-.5){   // against the shell from the side: pushed back out
+                const k=Math.sqrt(reach)||1;
+                b.X=tom.X+(b.X-tom.X)/k*1.08;b.Z=tom.Z+(b.Z-tom.Z)/k*1.08;b.vx*=-.3;b.vz*=-.3;
+            }
+        }
+        if(b.H<=0)kitSettle(sim,b);   // on the floor: no bounce, it stops where it is
+    }
+    sim.balls=sim.balls.filter(b=>b.landed||(Math.abs(b.X)<90&&b.Z>-8&&b.Z<45));
+}
+// Bits instead of sparks: 3 x 5 zeros and ones fall; on the floor they are squashed to the top two rows.
+const KIT_BITS=[['111','101','101','101','111'],['010','110','010','010','111']];
+function drawKitBit(x,y,digit,flat,tone){
+    ctx.fillStyle=getColor(tone);
+    const rows=KIT_BITS[digit],shown=flat?[rows[0],rows[4]]:rows;
+    shown.forEach((row,r)=>{for(let c=0;c<3;c++)if(row[c]==='1')ctx.fillRect(x-1+c,y-(flat?1:2)+r,1,1);});
+}
+// The back wall: empty, but cut into flat triangular facets like a low-poly surface, each a slightly different
+// shade (none / sparse dots / denser dots) with a thin seam between them. Built once.
+const KIT_WALL_H=46;
+let kitWallLevels=null;
+function kitWall(){
+    if(kitWallLevels)return kitWallLevels;
+    const xs=[0,22,47,70,96],ys=[0,13,29,KIT_WALL_H];
+    const jitter=[[0,0],[0,0],[0,0],[0,0],[0,0],[0,0],[5,3],[-6,-3],[4,-2],[0,0],[0,0],[-3,4],[6,-4],[-5,3],[0,0],[0,0],[0,0],[0,0],[0,0],[0,0]];
+    const point=(i,j)=>[xs[i]+jitter[j*5+i][0],ys[j]+jitter[j*5+i][1]];
+    const shades=[0,0,1,0,0,0,0,1,0,0,2,0,0,0,1,0,0,0,0,1,0,0,0,1];
+    const mask=new Uint8Array(96*KIT_WALL_H),seam=new Uint8Array(96*KIT_WALL_H);
+    let index=0;
+    for(let j=0;j<3;j++)for(let i=0;i<4;i++){
+        const a=point(i,j),b=point(i+1,j),c=point(i+1,j+1),d=point(i,j+1);
+        const tris=(i+j)%2?[[a,b,c],[a,c,d]]:[[a,b,d],[b,c,d]];
+        for(const t of tris){
+            const level=shades[index++%shades.length];
+            for(let y=0;y<KIT_WALL_H;y++)for(let x=0;x<96;x++){
+                const p=[x+.5,y+.5],sign=(u,v,w)=>(u[0]-w[0])*(v[1]-w[1])-(v[0]-w[0])*(u[1]-w[1]);
+                const d1=sign(p,t[0],t[1]),d2=sign(p,t[1],t[2]),d3=sign(p,t[2],t[0]);
+                if(!((d1<0||d2<0||d3<0)&&(d1>0||d2>0||d3>0))){mask[y*96+x]=level;seam[y*96+x]=index;}
+            }
+        }
+    }
+    kitWallLevels={mask,seam};return kitWallLevels;
+}
+function drawKitWall(){
+    const {mask,seam}=kitWall();
+    ctx.fillStyle=getColor(2);
+    for(let y=0;y<KIT_WALL_H;y++)for(let x=0;x<96;x++){
+        const i=y*96+x,level=mask[i];
+        const edge=(x<95&&seam[i+1]!==seam[i])||(y<KIT_WALL_H-1&&seam[i+96]!==seam[i]);
+        if(edge||(level===1&&(x+y)%6===0)||(level===2&&(x+y)%4===0))ctx.fillRect(x,y,1,1);
+    }
+    ctx.fillRect(0,KIT_WALL_H,96,1);
+}
+function renderKitGenerating(){
+    if(kit.error){
+        clearScreen();drawListTitle('Drum Kit');
+        wrapBitmapText(kit.error,84,4).forEach((line,index)=>drawStringCentered(20+index*10,line,FONTS.Regular,1));
+        drawSoftkeys('Retry','Back');return;
+    }
+    clearScreen();drawKitWall();
+    const sim=kit.sim,now=performance.now();
+    if(!sim)return;
+    const dt=Math.min(.25,(now-sim.last)/1000);sim.last=now;
+    for(let left=dt;left>0;left-=1/240)kitStep(sim,Math.min(1/240,left));
+    // Painter's order, far to near. A spark on or above a head is drawn after that tom.
+    const items=KIT_STAGE_TOMS.map(tom=>({z:tom.Z,tom}));
+    for(const b of sim.balls){
+        let z=b.Z;
+        if(!b.landed)for(const tom of KIT_STAGE_TOMS)if(kitTomReach(b,tom)<=1&&b.H>=tom.h-.5)z=Math.min(z,tom.Z-.01);
+        items.push({z,ball:b});
+    }
+    items.sort((p,q)=>q.z-p.z);
+    for(const item of items){
+        if(item.tom){
+            const tom=item.tom,[sx,floorY]=kitProject(tom.X,tom.Z,0),sprite=tom.back?KIT_ICONS.tomBack:KIT_ICONS.tomFront;
+            drawKitSprite(sprite,Math.round(sx)-sprite[0].length/2,Math.round(floorY)-sprite.length+1);
+            continue;
+        }
+        const b=item.ball;
+        if(b.landed){const [x,y]=kitProject(b.X,b.Z,0);drawKitBit(Math.round(x),Math.round(y)-b.level,b.digit,true,1);continue;}
+        let surface=0;   // where it will land: on the head below it or on the floor
+        for(const tom of KIT_STAGE_TOMS)if(kitTomReach(b,tom)<=1&&b.H>=tom.h-.5)surface=tom.h;
+        const [shadowX,shadowY]=kitProject(b.X,b.Z,surface);
+        ctx.fillStyle=getColor(2);ctx.fillRect(Math.round(shadowX)-1,Math.round(shadowY),3,1);
+        const [x,y]=kitProject(b.X,b.Z,b.H);
+        drawKitBit(Math.round(x),Math.round(y),b.digit,false,1);
+    }
+}
+// The finished kit: one picture per pad. Left/Right choose a pad, Space (or a click, 1-4, A S D F) plays it, Enter
+// (the Edit key) opens the editor for it.
+function renderKitResult(){
+    clearScreen();
+    drawKitBoard([0,1,2,3].map(kitPadSprite));
+    const missing=kit.indices&&kit.indices[kit.focus]==null;
+    drawSoftkeys(kitReroll.msg||(missing?(kitReroll.busy?'':'Make'):'Edit'),'Back');
+}
+// The 33 ms timer asks this: should the screen be drawn again now? (Once per step, not per tick.)
+function kitTick(){
+    if(document.hidden||currentState!==ScreenState.KIT_GEN||!kit.sim||kit.error)return false;
+    const now=performance.now();
+    if(kit.indices&&now-kit.sim.start>=KIT_MIN_MS){kit.sim=null;kit.focus=0;currentState=ScreenState.KIT_RESULT;kitSyncEngine();return true;}
+    if(now-kitLastDraw>=KIT_STEP_MS){kitLastDraw=now;return true;}
+    return false;
+}
+
 function renderPhoto() {
     clearScreen();
     const W=PHOTO_W,H=PHOTO_H,S=ROOM_SCALE,now=performance.now();
@@ -3629,32 +4315,32 @@ function generateAiSample() {
 }
 const voicesEmptyLabel=()=>instrumentsLoaded?'Empty':'Loading';
 // 18 x 11 icons, about the height of the text beside them ('#' ink, '+' mid tone), drawn like the
-// Games icons. Generated: three inputs feed a spark (neural net -> sound). Uploaded: an arrow
-// lifting out of a tray.
+// Generated: a small network (two inputs, three hidden nodes, one output). Uploaded: a small arrow over a line with a
+// hint of mid tone under it. Drum Kits: a drum. Index 2 is the Photos picture.
 const VOICE_CATEGORY_ICONS=[[
-    "##..........#.....",
-    "##.+........#.....",
-    "....+.......#.....",
-    ".....+.....###....",
-    "##....+...#####...",
-    "##.++++###########",
-    "......+...#####...",
-    ".....+.....###....",
-    "....+.......#.....",
-    "##.+........#.....",
-    "##..........#....."
+    ".......###........",
+    "......+###........",
+    "###.+++###++......",
+    "###+.+......+.....",
+    "###+++.###...++###",
+    "....+.+###+++++###",
+    "###+++.###...++###",
+    "###+.+......+.....",
+    "###.+++###++......",
+    "......+###........",
+    ".......###........"
 ],[
-    "........#.........",
-    ".......###........",
-    "......#####.......",
-    ".....#######......",
-    ".......###........",
-    ".......###........",
-    ".......###........",
-    "..#....###....#...",
-    "..#...........#...",
-    "..#...........#...",
-    "..#############..."
+    "..................",
+    "........##........",
+    ".......####.......",
+    "......######......",
+    ".....##.##.##.....",
+    "........##........",
+    "........##........",
+    "........##........",
+    "..................",
+    "...############...",
+    "....++++++++++...."
 ],[
     "..###############.",
     "..#.............#.",
@@ -3667,10 +4353,25 @@ const VOICE_CATEGORY_ICONS=[[
     "..#+++++++.#####.#",
     "..###############.",
     ".................."
+],[
+    ".....########.....",
+    "..###........###..",
+    ".#..............#.",
+    ".#..............#.",
+    ".####........####.",
+    ".#+++########+++#.",
+    ".#++#++#++#++#++#.",
+    ".#++#++#++#++#++#.",
+    "..###++#++#++###..",
+    "....##########....",
+    ".................."
 ]];
+// The folders are called Generated, Drum Kits and Uploaded inside the code; the first one is shown as Tones (the
+// single-note sounds, against the drum kits).
+const voiceCategoryLabel=name=>name==="Generated"?"Tones":name;
 function renderVoiceCategories(){
-    renderChoiceCards('Voices',voiceCategories,selectedCategoryIndex,(index,y,ink)=>{
-        VOICE_CATEGORY_ICONS[{Generated:0,Uploaded:1,Photos:2}[voiceCategories[index]]??0].forEach((row,r)=>{
+    renderChoiceCards('Voices',voiceCategories.map(voiceCategoryLabel),selectedCategoryIndex,(index,y,ink)=>{
+        VOICE_CATEGORY_ICONS[{Generated:0,Uploaded:1,Photos:2,'Drum Kits':3}[voiceCategories[index]]??0].forEach((row,r)=>{
             for(let c=0;c<row.length;c++){
                 if(row[c]==='.')continue;
                 ctx.fillStyle=getColor(row[c]==='#'?ink:2);ctx.fillRect(10+c,y+6+r,1,1);
@@ -3722,7 +4423,7 @@ function renderPhotoGrid() {
 // One plain arrow on the left edge (the right edge belongs to the scroll bar): left and right both change folder. It
 // gives a small push inwards, and goes dark, while the folder changes.
 function drawFolderArrow(now,kicking) {
-    const midY=LCD_LAYOUT.listTop+22,push=kicking?1:0;
+    const midY=LCD_LAYOUT.listTop+22,push=1;   // one pixel in from the edge; the arrow only changes colour
     ctx.fillStyle=getColor(kicking?1:2);
     [[0,2,1],[1,1,3],[2,0,5]].forEach(([cx,cy,height])=>ctx.fillRect(push+cx,midY+cy,1,height));
     addLcdTarget(0,midY-3,4,12,()=>cycleTag(-1));
@@ -3731,7 +4432,7 @@ function renderVoicesListScreen() {
     currentCategoryRows();   // settles a folder that no longer exists
     if(voiceCategories[selectedCategoryIndex]==='Generated'&&selectedTag==='Photos'){renderPhotoGrid();return;}
     const rows=currentCategoryRows(),tabs=currentTabs(),now=performance.now();
-    const label=tabs.length>1&&selectedTag!=='All'?selectedTag:(voiceCategories[selectedCategoryIndex]||'Sounds');
+    const label=tabs.length>1&&selectedTag!=='All'?selectedTag:voiceCategoryLabel(voiceCategories[selectedCategoryIndex]||'Sounds');
     // The rules beside the title close in or open out over four steps when the label changes.
     const step=updateTitleMorph(label,now);
     renderHandsetList(label,rows.map(row=>row.name),Math.max(0,rows.findIndex(row=>row.index===activeVoiceIndex())),'Edit','Back',voicesEmptyLabel(),titleMorph.shown);
@@ -3741,6 +4442,13 @@ function renderVoicesListScreen() {
 }
 
 function editorRow(rowIndex) {
+    if(editKitPad()){   // a drum pad: Volume and Pan first, no Tune or Loop (it is a one-shot played at its own speed)
+        if(rowIndex===1)return {kind:'level',label:'Volume'};
+        if(rowIndex===2)return {kind:'pan',label:'Pan'};
+        const p=rowIndex-3;
+        if(p>=0&&p<EDIT_PARAMETERS.length)return {kind:'parameter',parameterUi:p,...EDIT_PARAMETERS[p]};
+        return {kind:'reroll',label:'Reroll'};
+    }
     if(rowIndex===1)return {kind:'tune',label:'Tune'};
     const parameterUi=rowIndex-2;
     if(parameterUi>=0&&parameterUi<EDIT_PARAMETERS.length)return {kind:'parameter',parameterUi,...EDIT_PARAMETERS[parameterUi]};
@@ -3808,6 +4516,12 @@ function renderEditVoiceScreen() {
         const ink=selected?0:1;drawString(4,y,item.label,FONTS.Regular,ink);
         let value='';
         if(item.kind==='tune')value=editRootName();
+        else if(item.kind==='level'||item.kind==='pan') {
+            const mix=kitMixOf(selectedVoiceIndex);
+            if(item.kind==='level'){drawLcdSlider(38,y+2,31,mix.level/100,false,selected?0:2,selected?1:0);value=String(mix.level);}
+            else{drawLcdSlider(38,y+2,31,(mix.pan+50)/100,false,selected?0:2,selected?1:0);value=mix.pan===0?'C':(mix.pan<0?'L':'R')+Math.abs(mix.pan);}
+        }
+        else if(item.kind==='reroll')value=kitReroll.busy?'.'.repeat(1+Math.floor(performance.now()/350)%3):(kitReroll.msg||'1 credit');
         else if(item.kind==='loop')value=editLoopName();
         else if(item.kind==='parameter') {
             const parameterValue=editValues[item.parameter];
@@ -3830,7 +4544,7 @@ function renderEditVoiceScreen() {
     }
     const selectedItem=editSelectedIndex>0?editorRow(editSelectedIndex):null;
     const left=editSelectedIndex===0?(editMarker==='start'?'Start':'Stop')
-        :selectedItem?.kind==='parameter'&&selectedItem.parameter===5?'Source':selectedItem?.kind==='tune'?'Open':selectedItem?.kind==='loop'?'Change':selectedItem?.kind==='rename'?'Rename':selectedItem?.kind==='delete'?'Delete':'';
+        :selectedItem?.kind==='parameter'&&selectedItem.parameter===5?'Source':selectedItem?.kind==='reroll'?'Reroll':selectedItem?.kind==='level'||selectedItem?.kind==='pan'?'Play':selectedItem?.kind==='tune'?'Open':selectedItem?.kind==='loop'?'Change':selectedItem?.kind==='rename'?'Rename':selectedItem?.kind==='delete'?'Delete':'';
     drawSoftkeys(left,'Back');
 }
 
@@ -3871,14 +4585,22 @@ function confirmDeleteFromList(){
     if(currentState!==ScreenState.VOICES_LIST||!categoryVoiceIndices().includes(selectedVoiceIndex)||!generatedVoice())return false;
     deleteReturnState=ScreenState.VOICES_LIST;currentState=ScreenState.DELETE_SAMPLE;render();return true;
 }
-function deleteSelectedGenerated() {
+async function deleteSelectedGenerated() {
     const fn=window.__JUCE__?.backend?.getNativeFunction?.('deleteGeneratedSample');
     if(!fn)return;
-    fn(selectedVoiceIndex).then(raw=>{
-        const result=unwrapNativeResult(raw);if(!result.ok)return;
-        selectedVoiceIndex=Number(result.index)||0;currentState=ScreenState.VOICE_CATEGORIES;
-        syncInstrumentsFromBackend();render();
-    }).catch(()=>{});
+    const info=kitInfo(selectedVoiceIndex);
+    const targets=info&&deleteReturnState===ScreenState.VOICES_LIST?kitPresent(info.id):[selectedVoiceIndex];
+    let last=0,done=false;
+    try{
+        for(const index of targets.sort((a,b)=>b-a)){
+            const result=unwrapNativeResult(await fn(index));
+            if(!result.ok)break;
+            last=Number(result.index)||0;done=true;
+        }
+    }catch(_){}
+    if(!done)return;
+    selectedVoiceIndex=last;currentState=ScreenState.VOICE_CATEGORIES;
+    syncInstrumentsFromBackend();render();
 }
 
 function syncEditSliders() {
@@ -3896,7 +4618,21 @@ function syncEditSliders() {
     editSliders.replaceChildren();
     for (let row = 0; row < 3; ++row) {
         const rowIndex=editScrollTop+row,item=editorRow(rowIndex);
-        if(rowIndex>=editRowCount()||item.kind!=='parameter')continue;
+        if(rowIndex>=editRowCount())continue;
+        if(item.kind==='level'||item.kind==='pan'){
+            const mixSlider=document.createElement('input'),isLevel=item.kind==='level';
+            mixSlider.type='range';mixSlider.min=isLevel?'0':'-50';mixSlider.max=isLevel?'100':'50';mixSlider.step='1';
+            mixSlider.value=String(kitMixOf(selectedVoiceIndex)[isLevel?'level':'pan']);
+            mixSlider.style.top=`${2*(LCD_LAYOUT.editorRowsTop+row*LCD_LAYOUT.editorRowHeight)}px`;
+            mixSlider.style.height=`${2*LCD_LAYOUT.editorRowHeight}px`;
+            mixSlider.setAttribute('aria-label',item.label);
+            if(!isLevel)mixSlider.addEventListener('dblclick',event=>{event.preventDefault();kitSetMix(selectedVoiceIndex,{pan:0});mixSlider.value='0';});
+            mixSlider.addEventListener('pointerdown',()=>{editSelectedIndex=rowIndex;render();});
+            mixSlider.addEventListener('input',()=>kitSetMix(selectedVoiceIndex,isLevel?{level:Number(mixSlider.value)}:{pan:Number(mixSlider.value)}));
+            editSliders.appendChild(mixSlider);
+            continue;
+        }
+        if(item.kind!=='parameter')continue;
         const parameterIndex=item.parameterUi;
         const slider = document.createElement('input');
         slider.type = 'range'; slider.min = '1'; slider.max = String(editMaximum(parameterIndex)); slider.step = '0.01';
@@ -4139,6 +4875,8 @@ function renderScreenContent(){
     else if (currentState === ScreenState.AI_COMPARE) renderAiCompare();
     else if (currentState === ScreenState.PHOTO) renderPhoto();
     else if (currentState === ScreenState.PHOTO_SCAN) renderPhotoScan();
+    else if (currentState === ScreenState.KIT_GEN) renderKitGenerating();
+    else if (currentState === ScreenState.KIT_RESULT) renderKitResult();
     else if (currentState === ScreenState.AI_TUNE) renderAiTune();
     else if (currentState === ScreenState.IMPORT_LOADING) renderImportLoading();
     else if (currentState === ScreenState.IMPORT_CONFIRM) renderImportConfirm();
@@ -4306,8 +5044,8 @@ window.addEventListener('keydown', (e) => {
         return;
     }
     if(currentState===ScreenState.UPDATE){
-        if(e.key==='Escape'||e.key==='Backspace'){updateMessage='';currentState=ScreenState.SETTINGS;render();e.preventDefault();}
-        else if((e.key==='Enter'||e.key===' ')&&!updateChecking){openUpdatePage();e.preventDefault();}
+        if(e.key==='Escape'||e.key==='Backspace'){snoozeUpdate();updateMessage='';currentState=updateReturnState;updateReturnState=ScreenState.SETTINGS;render();e.preventDefault();}
+        else if((e.key==='Enter'||e.key===' ')&&!updateChecking){snoozeUpdate();openUpdatePage();e.preventDefault();}
         return;
     }
     if(currentState===ScreenState.LICENSE_STATUS){
@@ -4317,6 +5055,20 @@ window.addEventListener('keydown', (e) => {
             e.preventDefault();
         }
         return;
+    }
+    if(currentState===ScreenState.KIT_GEN){
+        if(kit.error&&(e.key==='Enter'||e.key===' '))kitBegin();
+        else if(e.key==='Escape'||e.key==='Backspace'){++kitSerial;openKitPrompt();}
+        e.preventDefault();return;
+    }
+    if(currentState===ScreenState.KIT_RESULT){
+        if(e.key==='Escape'||e.key==='Backspace'){if(kit.from==='list')kitLeaveToList();else openKitPrompt();}
+        else if(e.key==='Enter')kitEdit();
+        else if(e.key===' ')kitHit(kit.focus);
+        else if(e.key==='ArrowLeft'||e.key==='ArrowRight')kitMoveFocus(e.key==='ArrowRight'?1:-1);
+        else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.repeat&&/^[1-4]$/.test(e.key))kitHit(Number(e.key)-1);
+        else if(!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.repeat&&'asdf'.includes(e.key.toLowerCase())&&e.key.length===1)kitHit('asdf'.indexOf(e.key.toLowerCase()));
+        e.preventDefault();return;
     }
     if(currentState===ScreenState.PHOTO){
         if(captureUpsellOpen){
@@ -4368,10 +5120,10 @@ window.addEventListener('keydown', (e) => {
     }
     if(currentState===ScreenState.AI_PROMPT) {
         if(demoTyping){if(e.key==='Escape')cancelDemoTyping();e.preventDefault();return;} // a macro is typing
-        if(e.key==='Tab'){openAiOptions();e.preventDefault();return;}
+        if(e.key==='Tab'){if(!kitPromptMode)openAiOptions();e.preventDefault();return;}
         if((e.key==='Backspace'||e.key==='Delete') && !aiPromptInput.value.length){leaveSoundMaker();e.preventDefault();return;}
-        if(e.key==='Enter') {generateAiSample();e.preventDefault();}
-        else if(e.key==='Escape') {if(aiPromptInput.value.length)openAiOptions();else leaveSoundMaker();e.preventDefault();}
+        if(e.key==='Enter') {if(kitPromptMode)startKit();else generateAiSample();e.preventDefault();}
+        else if(e.key==='Escape') {if(aiPromptInput.value.length&&!kitPromptMode)openAiOptions();else leaveSoundMaker();e.preventDefault();}
         else {
             // Typing, selection, clipboard and word movement are the textarea's; the rest is LcdTextField's.
             if(promptField.handleKey(e,80,4))e.preventDefault();
@@ -4484,7 +5236,7 @@ window.addEventListener('keydown', (e) => {
             if(String(id).startsWith('group:')){settingsGroup=id.slice(6);settingsRow=0;settingsEditing=false;}
             else if(id==='output'){settingsEditing=false;loadAudioOutputs(true);}
             else if(id==='license'){settingsEditing=false;checkLicenseStatus();}
-            else if(id==='update'){settingsEditing=false;if(updateInfo.newer){updateMessage='';currentState=ScreenState.UPDATE;}else checkForUpdates(true);}
+            else if(id==='update'){settingsEditing=false;if(updateInfo.newer){updateMessage='';updateReturnState=ScreenState.SETTINGS;currentState=ScreenState.UPDATE;}else checkForUpdates(true);}
             else if(id==='messages'||id==='velocity'||id==='bend'||id==='speaker')adjustPhoneSetting(1);
             else settingsEditing=!settingsEditing;
         }
@@ -4503,7 +5255,10 @@ window.addEventListener('keydown', (e) => {
         } else if (e.key==='Enter' || e.key===' ') {
             const indices=categoryVoiceIndices();
             if (indices.length) {
-                if (!indices.includes(selectedVoiceIndex)) selectedVoiceIndex=indices[0];
+                if (!indices.includes(selectedVoiceIndex)) {
+                    const info=kitInfo(selectedVoiceIndex),rep=info?kitRepresentatives().get(info.id):undefined;
+                    selectedVoiceIndex=indices.includes(rep)?rep:indices[0];
+                }
                 emitJuce('previewVoice',{index:selectedVoiceIndex});
             }
             listScrollTop=0;currentState=ScreenState.VOICES_LIST;
@@ -4578,10 +5333,11 @@ window.addEventListener('keydown', (e) => {
         } else if (currentState === ScreenState.MENU) {
             const page = MENU_PAGES[selectedMenuIndex];
             if (page.title === 'Voices') {
-                currentState = ScreenState.VOICE_CATEGORIES;
-                render();
+                openVoiceFolders();
             } else if (page.kind === 'ai') {
                 openNeuralSynthesis();
+            } else if (page.title === 'Drum Kit') {
+                openKitPrompt();
             } else if (page.title === 'Capture') {
                 openCamera();
             } else if (page.title === 'Messages') {
@@ -4592,6 +5348,8 @@ window.addEventListener('keydown', (e) => {
             } else if (page.title === 'Settings') {
                 currentState=ScreenState.SETTINGS;settingsGroup=null;settingsRow=0;settingsEditing=false;if(!IS_PLUGIN_HOST)loadAudioOutputs();refreshSoundMakerCredits();render();
             }
+        } else if (currentState === ScreenState.VOICES_LIST&&kitInfo(selectedVoiceIndex)&&openSavedKit(selectedVoiceIndex)) {
+            // a saved drum kit opens its own screen
         } else if (currentState === ScreenState.VOICES_LIST) {
             editReturnState=ScreenState.VOICES_LIST;
             currentState = ScreenState.EDIT_VOICE;
@@ -4604,6 +5362,8 @@ window.addEventListener('keydown', (e) => {
             const item=editSelectedIndex>0?editorRow(editSelectedIndex):null;
             if(editSelectedIndex===0){editMarker=editMarker==='start'?'end':'start';render();}
             else if(item?.kind==='loop')cycleLoopSelection(1);
+            else if(item?.kind==='level'||item?.kind==='pan')kitPreview(selectedVoiceIndex);
+            else if(item?.kind==='reroll')kitRerollPad();
             else if(item?.kind==='parameter'&&item.parameter===5)toggleEditSource();
             else if(item?.kind==='tune'){tuneField=0;tuneError='';currentState=ScreenState.ROOT_TUNE;render();}
             else if(item?.kind==='rename')openRename();
@@ -4620,6 +5380,7 @@ window.addEventListener('keydown', (e) => {
         if(currentState===ScreenState.IDLE){cancelMenuOpen();if(instrumentList.length)openSampleEditor(ScreenState.IDLE);e.preventDefault();return;}
         if (currentState === ScreenState.EDIT_VOICE) {
             currentState = editReturnState;
+            if(currentState===ScreenState.KIT_RESULT)kitAfterEdit();
             render();
             if(demoMode&&currentState===ScreenState.AI_PROMPT)focusAiPrompt();
         } else if (currentState === ScreenState.VOICES_LIST) {
@@ -4684,6 +5445,8 @@ window.addEventListener('keydown', (e) => {
             const item=editSelectedIndex>0?editorRow(editSelectedIndex):null;
             if(editSelectedIndex===0)moveEditMarker(-1,e.shiftKey);
             else if(item?.kind==='tune')stepTune(-1);
+            else if(item?.kind==='level')kitSetMix(selectedVoiceIndex,{level:kitMixOf(selectedVoiceIndex).level-(e.shiftKey?1:5)});
+            else if(item?.kind==='pan')kitSetMix(selectedVoiceIndex,{pan:kitMixOf(selectedVoiceIndex).pan-(e.shiftKey?1:5)});
             else if(item?.kind==='parameter')stepEditParameter(item.parameterUi,-1,e.shiftKey);
             else if(item?.kind==='loop')cycleLoopSelection(-1);
         }
@@ -4699,6 +5462,8 @@ window.addEventListener('keydown', (e) => {
             const item=editSelectedIndex>0?editorRow(editSelectedIndex):null;
             if(editSelectedIndex===0)moveEditMarker(1,e.shiftKey);
             else if(item?.kind==='tune')stepTune(1);
+            else if(item?.kind==='level')kitSetMix(selectedVoiceIndex,{level:kitMixOf(selectedVoiceIndex).level+(e.shiftKey?1:5)});
+            else if(item?.kind==='pan')kitSetMix(selectedVoiceIndex,{pan:kitMixOf(selectedVoiceIndex).pan+(e.shiftKey?1:5)});
             else if(item?.kind==='parameter')stepEditParameter(item.parameterUi,1,e.shiftKey);
             else if(item?.kind==='loop')cycleLoopSelection(1);
         }
@@ -4922,7 +5687,7 @@ document.querySelectorAll('.phone-key').forEach(button => {
         }else if(button.dataset.action==='stop'&&confirmDeleteFromList()){
             // Red key in the voices list opens the same "Delete WAV files?" confirmation as the editor.
         }else if(button.dataset.action==='stop'&&currentState===ScreenState.AI_PROMPT){
-            openAiOptions(); // red key on the prompt screen: generation options
+            if(!kitPromptMode)openAiOptions(); // red key on the prompt screen: generation options
         }else if(button.dataset.action==='stop'&&currentState===ScreenState.AI_OPTIONS){
             closeAiOptions();
         }else if([ScreenState.GAMES,ScreenState.SNAKE,ScreenState.BILLIARDS].includes(currentState)&&button.dataset.action==='stop'){
@@ -4956,7 +5721,8 @@ setInterval(()=>{
     render();
 },530);
 setInterval(()=>{
-    if(currentState===ScreenState.AI_GENERATING&&!aiError&&!document.hidden)render();
+    if(kitTick())render();
+    else if(currentState===ScreenState.AI_GENERATING&&!aiError&&!document.hidden)render();
     else if(currentState===ScreenState.PHOTO_SCAN&&!photoError&&!document.hidden)render();
     else if(handsetMarqueeLive&&!document.hidden)render();
     else if(currentState===ScreenState.PHOTO&&!document.hidden&&performance.now()-roomLastDraw>=90){roomTick();render();}   // candle flicker

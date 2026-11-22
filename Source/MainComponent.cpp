@@ -295,6 +295,8 @@ MainComponent::MainComponent()
             status->setProperty("library", toneCardInstalled);
             status->setProperty("audio", audioDeviceOpened);
             status->setProperty("engineRate", kEngineSampleRate);
+            static const juce::String launchId = juce::Uuid().toString(); // one per run of the app
+            status->setProperty("launchId", launchId);
             if(auto* device=audioDeviceManager.getCurrentAudioDevice()){
                 status->setProperty("outputRate", device->getCurrentSampleRate());
                 status->setProperty("blockSize", device->getCurrentBufferSizeSamples());
@@ -345,6 +347,39 @@ MainComponent::MainComponent()
         .withNativeFunction("generateSoundEffect", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
             generateSoundEffect(args.isEmpty() ? juce::String() : args[0].toString(),
                                 args.size() > 1 ? args[1] : juce::var(), std::move(completion));
+        })
+        .withNativeFunction("generateDrumKit", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+            const auto words = args.isEmpty() ? juce::String() : args[0].toString().trim().substring(0, 450);
+            const auto tuning = GenerationOptions::fromVar(args.size() > 1 ? args[1] : juce::var());
+            if (!toneCardInstalled) { completion(makeGenerationError("Still loading")); return; }
+            if (words.isEmpty()) { completion(makeGenerationError("Write something")); return; }
+            if (sampleImporter->pending()) { completion(makeGenerationError("Save or discard first")); return; }
+            const float influence = tuning.influence >= 0.0f ? tuning.influence : loadPromptInfluence();
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            sampleImporter->generateKit(words, influence, tuning, args.size() > 1 ? (int)args[1]["drumMap"] : 0,
+                [safeThis](int index) { if (safeThis != nullptr) safeThis->persistInstrumentSettings(index); }, std::move(completion));
+        })
+        .withNativeFunction("rerollKitPad", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
+            // (description, { enhance, pad, index, kit, mix, name }): a new take of one pad of a saved kit, one credit.
+            const auto words = args.isEmpty() ? juce::String() : args[0].toString().trim().substring(0, 450);
+            const auto options = args.size() > 1 ? args[1] : juce::var();
+            const auto tuning = GenerationOptions::fromVar(options);
+            if (!toneCardInstalled) { completion(makeGenerationError("Still loading")); return; }
+            if (words.isEmpty()) { completion(makeGenerationError("Write something")); return; }
+            if (sampleImporter->pending()) { completion(makeGenerationError("Save or discard first")); return; }
+            const float influence = tuning.influence >= 0.0f ? tuning.influence : loadPromptInfluence();
+            juce::Component::SafePointer<MainComponent> safeThis(this);
+            sampleImporter->rerollKitPad(words, influence, tuning, (int)options["pad"], (int)options["index"],
+                options["kit"].toString(), options["mix"].toString(), options["name"].toString().substring(0, 40),
+                [safeThis](int index) { if (safeThis != nullptr) safeThis->persistInstrumentSettings(index); }, std::move(completion));
+        })
+        .withEventListener("setDrumKit", [this](const juce::var& data) {
+            int ids[4] = { -1, -1, -1, -1 };
+            if (const auto* list = data["indices"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) ids[i] = (int)(*list)[i];
+            float levels[4] = { 80, 80, 80, 80 }, pans[4] = { 0, 0, 0, 0 };
+            if (const auto* list = data["levels"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) levels[i] = (float)(*list)[i];
+            if (const auto* list = data["pans"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) pans[i] = (float)(*list)[i];
+            soundEngine.setKit(ids, (int)data["map"], levels, pans);
         })
         .withNativeFunction("setGeneratedSampleControls", [this](const juce::Array<juce::var>& args, juce::WebBrowserComponent::NativeFunctionCompletion completion) {
             if (args.size() < 4) { completion(makeGenerationError("Invalid controls")); return; }

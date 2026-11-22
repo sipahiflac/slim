@@ -137,6 +137,13 @@ public:
     void allNotesOff();
     void selectVoice(int instrumentIndex);
     void previewVoice(int instrumentIndex);
+    // Drum kit: four instruments answer to four pads. `map` 0 = General MIDI drums (kick 35/36, snare 37/38/40, hat
+    // 42/44/46, percussion 39 ...), 1 = notes 36-39. Notes outside the map are ignored and a pad plays at the sample's
+    // own speed, to its end. Any index outside the card turns the kit off, as does choosing a normal voice.
+    // `levels` (0..100, 80 = as the sound is) and `pans` (-50..50) are one per pad; null means neutral.
+    void setKit(const int* instrumentIndices, int map, const float* levels = nullptr, const float* pans = nullptr);
+    // Switches the kit on when `instrumentIndex` is one of its pads (used when a saved DAW session is restored).
+    void switchKitFor(int instrumentIndex);
     void setMasterVolume(float gain) noexcept
     {
         if (std::isfinite(gain)) masterVolume.store(juce::jlimit(0.0f, 2.0f, gain), std::memory_order_relaxed);
@@ -232,14 +239,27 @@ private:
     int heldDisplayCount=0;
     struct AudioEvent
     {
-        enum class Type { NoteOn, NoteOff, AllNotesOff, SelectVoice, PreviewVoice, SetParam };
+        enum class Type { NoteOn, NoteOff, AllNotesOff, SelectVoice, PreviewVoice, SetParam, SetKit };
         Type type = Type::NoteOn;
         int note = 60;
         float velocity = 0.9f;
         int instrumentIndex = 0;
         int paramIndex = 0;
         float paramValue = 1.0f;
+        int kit[4] = { -1, -1, -1, -1 };
+        int kitMap = 0;
+        float kitLevel[4] = { 1.0f, 1.0f, 1.0f, 1.0f };   // gain per pad
+        float kitPan[4] = { 0.0f, 0.0f, 0.0f, 0.0f };     // -1 left .. 1 right
     };
+    std::array<float, 4> kitLevel{ 1.0f, 1.0f, 1.0f, 1.0f }, kitPan{ 0.0f, 0.0f, 0.0f, 0.0f };
+    // Left/right gain of the sound in each of the four voice slots (audio thread only).
+    std::array<float, 4> slotLeft{ 1.0f, 1.0f, 1.0f, 1.0f }, slotRight{ 1.0f, 1.0f, 1.0f, 1.0f };
+    float engineRight = 0.0f, prevEngineRight = 0.0f, currEngineRight = 0.0f;
+    // Audio thread only (written by SetKit events; cleared under detach when samples are deleted or the card is swapped).
+    std::array<int, 4> kitInstrument{ -1, -1, -1, -1 };
+    int kitMap = 0;
+    bool kitOn = false;
+    int kitPadForNote(int note) const noexcept;
 
     static constexpr uint32_t kQueueSize = 256;
     static constexpr uint32_t kQueueMask = 255;
@@ -264,7 +284,8 @@ private:
     std::array<Voice, 4> stealTails;
     std::array<int, 4> stealFadeRemaining{};
     void startVoiceInSlot(int slot, int note, float velocity, const Instrument* instrument,
-                          const VoiceParams& params) noexcept;
+                          const VoiceParams& params, bool fixedPitch = false,
+                          float gainLeft = 1.0f, float gainRight = 1.0f) noexcept;
     void clearStealTails() noexcept;
 
     double hostSampleRate = 44100.0;

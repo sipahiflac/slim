@@ -113,9 +113,12 @@ void SoundEngine::clearStealTails() noexcept
 }
 
 void SoundEngine::startVoiceInSlot(int slot, int note, float velocity,
-                                   const Instrument* instrument, const VoiceParams& params) noexcept
+                                   const Instrument* instrument, const VoiceParams& params, bool fixedPitch,
+                                   float gainLeft, float gainRight) noexcept
 {
     const auto index = (size_t)slot;
+    slotLeft[index] = gainLeft;
+    slotRight[index] = gainRight;
     if (voices[index].isActive())
     {
         stealTails[index] = voices[index];
@@ -126,7 +129,38 @@ void SoundEngine::startVoiceInSlot(int slot, int note, float velocity,
         stealTails[index].stop();
         stealFadeRemaining[index] = 0;
     }
-    voices[index].noteOn(note, velocity, instrument, params);
+    voices[index].noteOn(note, velocity, instrument, params, fixedPitch);
+}
+
+int SoundEngine::kitPadForNote(int note) const noexcept
+{
+    // The one drum map: in every octave C is the kick, D the snare, E the hi-hat and F the percussion.
+    if (note < 0) return -1;
+    switch (note % 12)
+    {
+        case 0: return 0;
+        case 2: return 1;
+        case 4: return 2;
+        case 5: return 3;
+        default: return -1;
+    }
+}
+
+void SoundEngine::setKit(const int* instrumentIndices, int map, const float* levels, const float* pans)
+{
+    AudioEvent ev;
+    ev.type = AudioEvent::Type::SetKit;
+    for (int i = 0; i < 4; ++i)
+    {
+        ev.kit[i] = instrumentIndices != nullptr ? instrumentIndices[i] : -1;
+        // Level 0..100 (80 = the sound as it is), pan -50..50; anything else is the neutral setting.
+        const float level = levels != nullptr && std::isfinite(levels[i]) ? std::clamp(levels[i], 0.0f, 100.0f) : 80.0f;
+        const float pan = pans != nullptr && std::isfinite(pans[i]) ? std::clamp(pans[i], -50.0f, 50.0f) : 0.0f;
+        ev.kitLevel[i] = level / 80.0f;
+        ev.kitPan[i] = pan / 50.0f;
+    }
+    ev.kitMap = map == 1 ? 1 : map == 2 ? 2 : 0;
+    pushEvent(ev);
 }
 
 float SoundEngine::renderEngineSample()
@@ -144,38 +178,48 @@ float SoundEngine::renderEngineSample()
     // Mix 4 voices into mono with movement layer status
     const bool movEnabled = movementEnabled.load(std::memory_order_relaxed);
     const float bend = getPitchBendSemitones();
-    float rawMono = 0.0f;
+    // Each voice has its own left/right gain (1 and 1 except for a drum-kit pad that was panned or turned down).
+    float rawLeft = 0.0f, rawRight = 0.0f;
     for (size_t i = 0; i < voices.size(); ++i)
     {
         voices[i].setPitchBend(bend);
         stealTails[i].setPitchBend(bend);
         const float fresh = voices[i].renderSample(movEnabled);
+        float voiceSample;
         int& remaining = stealFadeRemaining[i];
         if (remaining > 0)
         {
             const float old = stealTails[i].renderSample(movEnabled);
             const float t = 1.0f - (float)remaining / (float)kStealFadeSamples;
             const float newGain = t * t * (3.0f - 2.0f * t); // zero slope at both ends
-            rawMono += old * (1.0f - newGain) + fresh * newGain;
+            voiceSample = old * (1.0f - newGain) + fresh * newGain;
             if (--remaining == 0) stealTails[i].stop();
         }
-        else rawMono += fresh;
+        else voiceSample = fresh;
+        rawLeft += voiceSample * slotLeft[i];
+        rawRight += voiceSample * slotRight[i];
     }
 
     // Bypass the speaker colour, retaining a bounded soft overload safeguard
     // for four calibrated voices summed together.
     if (!speakerSimEnabled.load(std::memory_order_relaxed))
-        return rawMono / std::sqrt(1.0f + rawMono * rawMono);
+    {
+        engineRight = rawRight / std::sqrt(1.0f + rawRight * rawRight);
+        return rawLeft / std::sqrt(1.0f + rawLeft * rawLeft);
+    }
 
-    // One shared physical state for all four voices (chords share excursion/heat).
-    const float output = processSpeakerChain(rawMono);
+    // One shared physical state for all four voices (chords share excursion/heat). The phone speaker is a single
+    // mono speaker, so panning only shows with the speaker model off.
+    const float output = processSpeakerChain(0.5f * (rawLeft + rawRight));
     if (!std::isfinite(output))
     {
         // The speaker model and filters feed back on themselves, so one bad sample would silence
         // the engine until restart. Drop it and start the chain clean.
         resetSpeakerChain();
+        engineRight = 0.0f;
         return 0.0f;
     }
+    engineRight = output;
     return output;
 }
 
@@ -294,6 +338,7 @@ void SoundEngine::installToneCard(ToneCard card)
 {
     for (auto& voice : voices) voice.stop();
     clearStealTails();
+    kitOn = false; // the instrument numbers change with the card
     toneCard = std::move(card);
     editableParams.clear();
     for (const auto& instrument : toneCard.instruments)
@@ -326,6 +371,8 @@ juce::var SoundEngine::getInstrumentLibrary() const
         item->setProperty("editable", instrument.processedFile.isNotEmpty() || instrument.importDraft);
         if (instrument.thumbnail.isNotEmpty()) item->setProperty("thumb", instrument.thumbnail);
         if (instrument.tag.isNotEmpty()) item->setProperty("tag", instrument.tag);
+        if (instrument.kit.isNotEmpty()) item->setProperty("kit", instrument.kit);
+        if (instrument.mix.isNotEmpty()) item->setProperty("mix", instrument.mix);
         instruments.add(juce::var(item));
     }
     auto* library = new juce::DynamicObject();
@@ -470,6 +517,16 @@ juce::var SoundEngine::setInstrumentMeta(int instrumentIndex, const juce::var& m
         const auto tag = meta["tag"].toString();
         if (tag.length() <= 16 && tag.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) instrument.tag = tag;
     }
+    if (meta.hasProperty("kit"))
+    {
+        const auto kit = meta["kit"].toString();
+        if (kit.isEmpty() || isValidKitString(kit)) instrument.kit = kit;
+    }
+    if (meta.hasProperty("mix"))
+    {
+        const auto mix = meta["mix"].toString();
+        if (mix.isEmpty() || isValidMixString(mix)) instrument.mix = mix;
+    }
     result->setProperty("ok", true);
     return juce::var(result);
 }
@@ -494,6 +551,9 @@ juce::String SoundEngine::getInstrumentSettingsJson(int instrumentIndex) const
     object->setProperty("name", instrument.name);
     if (instrument.thumbnail.isNotEmpty()) object->setProperty("thumb", instrument.thumbnail);
     if (instrument.tag.isNotEmpty()) object->setProperty("tag", instrument.tag);
+    if (instrument.kit.isNotEmpty()) object->setProperty("kit", instrument.kit);
+    if (instrument.mix.isNotEmpty()) object->setProperty("mix", instrument.mix);
+    if (instrument.kit.isNotEmpty()) object->setProperty("kitRelease", true); // the saved Release is the player's, not the old default
     object->setProperty("brightness", params.brightness);
     object->setProperty("attack", params.attack);
     object->setProperty("release", params.release);
@@ -590,10 +650,38 @@ void SoundEngine::restoreSessionState(const juce::var& state)
             const auto& candidate = toneCard.instruments[(size_t)i];
             if ((source.isNotEmpty() && candidate.sourceFile == source)
                 || (source.isEmpty() && candidate.name == selected["name"].toString() && candidate.category == selected["category"].toString())) {
-                selectVoice(i); break;
+                selectVoice(i);
+                switchKitFor(i);   // a drum pad: the keys play the whole kit again, even before the window is opened
+                break;
             }
         }
     }
+}
+
+// If `instrumentIndex` is a pad of a drum kit, switch the kit on with the pads that exist and their level and pan
+// (kit string "<id>|<pad>|...", mix "<level>,<pan>"). Message thread; the audio thread only gets the SetKit event.
+void SoundEngine::switchKitFor(int instrumentIndex)
+{
+    if (instrumentIndex < 0 || instrumentIndex >= (int)toneCard.instruments.size()) return;
+    const auto kitId = toneCard.instruments[(size_t)instrumentIndex].kit.upToFirstOccurrenceOf("|", false, false);
+    if (kitId.isEmpty()) return;
+    int ids[4] = { -1, -1, -1, -1 };
+    float levels[4] = { 80, 80, 80, 80 }, pans[4] = { 0, 0, 0, 0 };
+    for (int i = 0; i < (int)toneCard.instruments.size(); ++i)
+    {
+        const auto& instrument = toneCard.instruments[(size_t)i];
+        if (instrument.importDraft || instrument.kit.upToFirstOccurrenceOf("|", false, false) != kitId) continue;
+        const auto role = instrument.kit.fromFirstOccurrenceOf("|", false, false).upToFirstOccurrenceOf("|", false, false);
+        if (role.length() != 1 || !role.containsOnly("0123")) continue;
+        const int pad = role.getIntValue();
+        ids[pad] = i;   // the later sound wins (a newer take of the same pad)
+        if (instrument.mix.isNotEmpty())
+        {
+            levels[pad] = (float)instrument.mix.upToFirstOccurrenceOf(",", false, false).getIntValue();
+            pans[pad] = (float)instrument.mix.fromFirstOccurrenceOf(",", false, false).getIntValue();
+        }
+    }
+    setKit(ids, 0, levels, pans);
 }
 
 juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
@@ -631,6 +719,7 @@ juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
     generated.playbackStart = std::make_shared<std::atomic<float>>(0.0f);
     generated.playbackEnd = std::make_shared<std::atomic<float>>(1.0f);
     generated.sourcePrompt = prepared.prompt;
+    generated.kit = prepared.kit;
     generated.generatedAt = prepared.generatedAt;
     generated.processedFile = prepared.processedFile;
     generated.originalFile = prepared.originalFile;
@@ -647,6 +736,7 @@ juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
     generated.loopStart = prepared.loopStart;
     generated.loopEnd = prepared.oneShot ? 0 : prepared.loopEnd;
     generated.defaultParams = { 10, 1, 3, 5, 1, 10, 5 };
+    if (generated.kit.isNotEmpty()) generated.defaultParams.release = 10.0f; // a drum is a one-shot: it rings out in full
 
     const int instrumentIndex = (int)toneCard.instruments.size();
     toneCard.instruments.push_back(std::move(generated));
@@ -655,6 +745,7 @@ juce::var SoundEngine::installGeneratedSample(PreparedGeneratedSample prepared)
 
     selectedInstrumentIndex.store(instrumentIndex, std::memory_order_release);
     activeInstrumentInAudioThread = instrumentIndex;
+    kitOn = false; // a newly installed sound is the one the keys play (a kit is switched on again after its four sounds)
 
     const auto& body = toneCard.instruments[(size_t)instrumentIndex].body;
     juce::Array<juce::var> waveformMin, waveformMax;
@@ -783,6 +874,7 @@ juce::var SoundEngine::deleteGeneratedSample(int instrumentIndex)
     if (instrumentIndex < 0 || instrumentIndex >= (int)toneCard.instruments.size()
         || (toneCard.instruments[(size_t)instrumentIndex].processedFile.isEmpty() && !toneCard.instruments[(size_t)instrumentIndex].importDraft))
     { result->setProperty("ok", false); return juce::var(result); }
+    kitOn = false; // a deleted sample shifts the numbers after it, and the kit may have lost a pad
 
     for (auto& voice : voices) voice.stop();
     clearStealTails();
@@ -923,14 +1015,36 @@ void SoundEngine::processEventInAudioThread(const AudioEvent& ev)
                     voice.applyParamsLive(p);
             break;
         }
+        case AudioEvent::Type::SetKit:
+        {
+            // A pad of -1 is a missing sound (that pad stays silent); the kit is on while at least one pad exists.
+            bool valid = true, any = false;
+            for (int i = 0; i < 4; ++i)
+            {
+                valid = valid && ev.kit[i] >= -1 && ev.kit[i] < numInstruments;
+                any = any || ev.kit[i] >= 0;
+            }
+            valid = valid && any;
+            kitOn = valid;
+            kitMap = ev.kitMap;
+            for (int i = 0; i < 4; ++i)
+            {
+                kitInstrument[(size_t)i] = valid ? ev.kit[i] : -1;
+                kitLevel[(size_t)i] = ev.kitLevel[i];
+                kitPan[(size_t)i] = ev.kitPan[i];
+            }
+            break;
+        }
         case AudioEvent::Type::SelectVoice:
         {
+            kitOn = false; // choosing a normal voice ends drum-kit mode
             activeInstrumentInAudioThread = std::clamp(ev.instrumentIndex, 0, numInstruments - 1);
             break;
         }
 
         case AudioEvent::Type::PreviewVoice:
         {
+            kitOn = false;
             activeInstrumentInAudioThread = std::clamp(ev.instrumentIndex, 0, numInstruments - 1);
             const auto* inst = &toneCard.instruments[(size_t)activeInstrumentInAudioThread];
 
@@ -970,6 +1084,17 @@ void SoundEngine::processEventInAudioThread(const AudioEvent& ev)
                 displayGate.store(true,std::memory_order_relaxed);
             }
             const auto* inst = &toneCard.instruments[(size_t)activeInstrumentInAudioThread];
+            float padLeft = 1.0f, padRight = 1.0f;
+            if (kitOn)
+            {
+                const int pad = kitPadForNote(ev.note);
+                if (pad < 0 || kitInstrument[(size_t)pad] < 0) break; // a note the kit has no pad (or no sound) for
+                inst = &toneCard.instruments[(size_t)kitInstrument[(size_t)pad]];
+                // Constant-power pan, centre = 1 on both sides.
+                const float angle = (kitPan[(size_t)pad] + 1.0f) * 0.7853982f;
+                padLeft = kitLevel[(size_t)pad] * 1.4142136f * std::cos(angle);
+                padRight = kitLevel[(size_t)pad] * 1.4142136f * std::sin(angle);
+            }
 
             const int fadingPreview = previewVoiceIndex;
             for (auto& voice : voices)
@@ -1009,7 +1134,7 @@ void SoundEngine::processEventInAudioThread(const AudioEvent& ev)
                 targetIdx = findQuietestVoice();
             }
 
-            startVoiceInSlot(targetIdx, ev.note, ev.velocity, inst, inst->defaultParams);
+            startVoiceInSlot(targetIdx, ev.note, ev.velocity, inst, inst->defaultParams, kitOn, padLeft, padRight);
             break;
         }
 
@@ -1019,6 +1144,7 @@ void SoundEngine::processEventInAudioThread(const AudioEvent& ev)
                 heldDisplayNotes[(size_t)ev.note]=false;--heldDisplayCount;
                 displayGate.store(heldDisplayCount>0,std::memory_order_relaxed);
             }
+            if (kitOn && kitPadForNote(ev.note) >= 0) break; // a drum hit plays to its end, whatever the key does
             for (int i = 0; i < 4; ++i)
             {
                 if (voices[i].isActive() && voices[i].getMidiNote() == ev.note)
@@ -1084,19 +1210,22 @@ void SoundEngine::renderAudioBlock(float* const* outputChannelData,
         {
             sourcePhase -= 1.0;
             prevEngineSample = currEngineSample;
+            prevEngineRight = currEngineRight;
             currEngineSample = renderEngineSample();
+            currEngineRight = engineRight;
         }
 
         // Fractional linear interpolation between consecutive engine samples
         float frac = (float)sourcePhase;
-        float outSample = (1.0f - frac) * prevEngineSample + frac * currEngineSample;
-        outSample *= masterGain.getNextValue();
+        const float gain = masterGain.getNextValue();
+        const float outLeft = ((1.0f - frac) * prevEngineSample + frac * currEngineSample) * gain;
+        const float outRight = ((1.0f - frac) * prevEngineRight + frac * currEngineRight) * gain;
 
-        // Copy mono output to all active channels (e.g. Left & Right stereo)
+        // Left and right for a stereo output; a mono output gets their average, any further channel the left.
         for (int ch = 0; ch < numOutputChannels; ++ch)
         {
             if (float* chData = outputChannelData[ch])
-                chData[i] = outSample;
+                chData[i] = numOutputChannels == 1 ? 0.5f * (outLeft + outRight) : (ch == 1 ? outRight : outLeft);
         }
     }
 }

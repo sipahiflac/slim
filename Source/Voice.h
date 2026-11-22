@@ -15,7 +15,8 @@ public:
 
     void setSampleRate(float rate); // Always kEngineSampleRateF
 
-    void noteOn(int midiNote, float velocity, const Instrument* instrument, const VoiceParams& params);
+    // fixedPitch: play the sample at its own speed whatever the note is (drum-kit pads); the note then only names the voice.
+    void noteOn(int midiNote, float velocity, const Instrument* instrument, const VoiceParams& params, bool fixedPitch = false);
     void refreshPitch();
     void noteOff(int midiNote);
     void fadeOut(float seconds);
@@ -79,6 +80,7 @@ private:
     bool active = false;
     bool menuPreview = false;
     int currentNote = -1;
+    bool fixedPitch = false;
     uint64_t age = 0; // Incremented every sample to identify the oldest voice
 
     const Instrument* currentInstrument = nullptr;

@@ -81,10 +81,11 @@ void Voice::updateParams(const VoiceParams& p)
     formantHigh.configure(950.0f * std::pow(3400.0f / 950.0f, formantT), 4.0f);
 }
 
-void Voice::noteOn(int midiNote, float velocity, const Instrument* instrument, const VoiceParams& params)
+void Voice::noteOn(int midiNote, float velocity, const Instrument* instrument, const VoiceParams& params, bool fixed)
 {
     menuPreview = false;
     currentNote = midiNote;
+    fixedPitch = fixed;
     endFadeRemaining = 0; endFadeOutput = 0.0f;
     currentInstrument = instrument;
     updateParams(params);
@@ -104,7 +105,7 @@ void Voice::noteOn(int midiNote, float velocity, const Instrument* instrument, c
     float baseNote = (instrument != nullptr) ? instrument->baseNote : 60;
     if (instrument != nullptr && instrument->liveBaseNote != nullptr)
         baseNote = instrument->liveBaseNote->load(std::memory_order_relaxed);
-    pitchRatio = std::pow(2.0, (midiNote - baseNote) / 12.0) * detuneRatio;
+    pitchRatio = (fixedPitch ? 1.0 : std::pow(2.0, (midiNote - baseNote) / 12.0)) * detuneRatio;
     bendSmoothed = bendTarget;
     bendRatio = std::abs(bendTarget) < 0.0005f ? 1.0 : std::pow(2.0, (double) bendTarget / 12.0);
 
@@ -457,7 +458,7 @@ void Voice::refreshPitch()
     float baseNote = currentInstrument->baseNote;
     if (currentInstrument->liveBaseNote != nullptr)
         baseNote = currentInstrument->liveBaseNote->load(std::memory_order_relaxed);
-    pitchRatio = std::pow(2.0, (currentNote - baseNote) / 12.0) * detuneRatio;
+    pitchRatio = (fixedPitch ? 1.0 : std::pow(2.0, (currentNote - baseNote) / 12.0)) * detuneRatio;
 }
 
 void Voice::applyParamsLive(const VoiceParams& params)

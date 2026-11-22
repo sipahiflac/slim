@@ -23,6 +23,11 @@ struct Instrument
     // Kept in the sound's own .2g.json so both the standalone and the plug-in see them: the picture a sound was made
     // from (38 x 22 pixels, one of 0/1/2 each) and the kind the language model filed it under (Keys, Winds ...).
     juce::String thumbnail, tag;
+    // A drum kit's pad: "<kit id>|<pad 0-3>|<percussion picture>|<kit name>". Empty for every other sound. The four
+    // sounds of a kit share the id, so the library can show them as one kit and reopen it later.
+    juce::String kit;
+    // A kit pad's level and pan as "<level 0-100>,<pan -50..50>" (empty = 80,0). Edited on the kit screen.
+    juce::String mix;
     std::vector<float> tick; // kEngineSampleRate mono sample (one-shot transient)
     std::vector<float> body; // kEngineSampleRate mono waveform (looped)
     std::vector<float> originalBody; // Immutable decoded source for Raw/Proc comparison.
@@ -90,11 +95,23 @@ struct PreparedGeneratedSample
     int loopEnd = 0;
     std::vector<LoopRegion> loopRegions;
     juce::String prompt;
+    juce::String kit; // see Instrument::kit
     juce::String generatedAt;
     juce::String processedFile;
     juce::String originalFile;
     juce::String error;
 };
+
+// What a kit string may hold: letters, digits, spaces, '-' and the '|' that separates its parts.
+inline bool isValidKitString(const juce::String& kit)
+{
+    return kit.length() <= 90 && kit.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 -|");
+}
+
+inline bool isValidMixString(const juce::String& mix)
+{
+    return mix.length() <= 8 && mix.containsOnly("0123456789,-") && mix.indexOfChar(',') > 0;
+}
 
 struct ToneCard
 {

@@ -278,6 +278,12 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
     files.removeIf([](const juce::File& file)
                    { return file.getFileNameWithoutExtension().endsWithIgnoreCase("_original"); });
 
+    // Oldest first (the file names start with the date and time), so the newest sound is the last one and Voices
+    // lists it at the top; the file system's own order is not guaranteed to be that.
+    struct ByName { static int compareElements(const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural(b.getFileName()); } };
+    ByName byName;
+    files.sort(byName);
+
     // Each sample is decoded and analysed on its own, so spread them over the cores.
     std::vector<std::optional<Instrument>> slots((size_t)files.size());
     parallelFor(files.size(), [&files, &slots, uploaded](int index)
@@ -329,7 +335,7 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         VoiceParams savedParams { 10, 1, 3, 5, 1, 10, 5 };
         float trimStart = 0.0f, trimEnd = 1.0f;
         juce::String savedName; // a name the user typed in the editor wins over the prompt
-        juce::String savedThumb, savedTag;
+        juce::String savedThumb, savedTag, savedKit, savedMix;
         int savedRoot = prepared.rootMidiNote;
         bool savedPitched = prepared.pitched, savedUseOriginal = false;
         const auto settingsFile = file.getSiblingFile(file.getFileName() + ".2g.json");
@@ -358,6 +364,18 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
                     const auto tag = settings["tag"].toString();
                     if (tag.length() <= 16 && tag.containsOnly("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")) savedTag = tag;
                 }
+                if (settings.hasProperty("kit"))
+                {
+                    const auto kit = settings["kit"].toString();
+                    if (isValidKitString(kit)) savedKit = kit;
+                }
+                // Kits saved before drums defaulted to a full release still carry the old default (3): ring out in full.
+                if (settings.hasProperty("kit") && !settings.hasProperty("kitRelease")) savedParams.release = 10.0f;
+                if (settings.hasProperty("mix"))
+                {
+                    const auto mix = settings["mix"].toString();
+                    if (isValidMixString(mix)) savedMix = mix;
+                }
                 savedRoot = settings.hasProperty("rootNote") ? (int)settings["rootNote"] : savedRoot;
                 savedPitched = settings.hasProperty("pitched") ? (bool)settings["pitched"] : savedPitched;
                 savedUseOriginal = settings.hasProperty("useOriginal") ? (bool)settings["useOriginal"] : false;
@@ -377,6 +395,8 @@ void ToneCard::appendGeneratedSamples(ToneCard& card, const juce::File& folder, 
         instrument.uploaded = uploaded;
         instrument.thumbnail = savedThumb;
         instrument.tag = savedTag;
+        instrument.kit = savedKit;
+        instrument.mix = savedMix;
         instrument.body = std::move(prepared.processed);
         instrument.originalBody = std::move(prepared.original);
         instrument.originalOffset = prepared.originalOffset;

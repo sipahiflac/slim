@@ -44,6 +44,12 @@ public:
     // knows the single answer yields one entry; none means `error` is set.
     // With `photo` set, that image (JPEG, PNG, GIF or WebP bytes, sent untouched) is the request instead of words, and
     // `captions` gets the instrument description the server wrote for each sound.
+    // A drum kit from one description: one request, two credits, four sounds in the order kick, snare, hat, percussion.
+    // `percType` is the picture the server chose for the percussion pad (tambourine, conga, triangle, maracas or pad),
+    // `percName` its short name. Anything but four sounds sets `error`.
+    static void generateKit(const juce::String& text, float influence, juce::String& error,
+                            std::vector<juce::MemoryBlock>& audio, juce::String& percType, juce::String& percName,
+                            const GenerationOptions& options = {}, int rerollPad = -1);
     static void generateVariants(const juce::String& text, float influence, juce::String& error,
                                  std::vector<juce::MemoryBlock>& audio, std::vector<juce::String>& kinds,
                                  const GenerationOptions& options = {}, const juce::MemoryBlock* photo = nullptr,

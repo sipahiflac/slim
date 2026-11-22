@@ -288,6 +288,9 @@ public:
                 status->setProperty("outputRate", processor.getSampleRate());
                 status->setProperty("blockSize", processor.getBlockSize());
                 status->setProperty("channels", processor.getTotalNumOutputChannels());
+                // One per load of the plug-in into the host process: closing and opening the editor keeps it.
+                static const juce::String launchId = juce::Uuid().toString();
+                status->setProperty("launchId", launchId);
                 done(juce::var(status));
             })
             .withNativeFunction("startupConsoleShown", [this](const auto&, auto done) {
@@ -342,6 +345,37 @@ public:
             .withNativeFunction("generateSoundEffect", [this](const auto& args, auto done) {
                 generateSoundEffect(args.isEmpty() ? juce::String() : args[0].toString(),
                                     args.size() > 1 ? args[1] : juce::var(), std::move(done));
+            })
+            .withNativeFunction("generateDrumKit", [this](const auto& args, auto done) {
+                const auto words = args.isEmpty() ? juce::String() : args[0].toString().trim().substring(0, 450);
+                const auto tuning = GenerationOptions::fromVar(args.size() > 1 ? args[1] : juce::var());
+                if (words.isEmpty()) { done(errorResult("Write something")); return; }
+                if (sampleImporter->pending()) { done(errorResult("Save or discard first")); return; }
+                const float influence = tuning.influence >= 0.0f ? tuning.influence : promptInfluence();
+                juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
+                sampleImporter->generateKit(words, influence, tuning, args.size() > 1 ? (int) args[1]["drumMap"] : 0,
+                    [safeThis](int index) { if (safeThis != nullptr) safeThis->saveSettings(index); }, std::move(done));
+            })
+            .withNativeFunction("rerollKitPad", [this](const auto& args, auto done) {
+                const auto words = args.isEmpty() ? juce::String() : args[0].toString().trim().substring(0, 450);
+                const auto options = args.size() > 1 ? args[1] : juce::var();
+                const auto tuning = GenerationOptions::fromVar(options);
+                if (words.isEmpty()) { done(errorResult("Write something")); return; }
+                if (sampleImporter->pending()) { done(errorResult("Save or discard first")); return; }
+                const float influence = tuning.influence >= 0.0f ? tuning.influence : promptInfluence();
+                juce::Component::SafePointer<Melodragon2GEditor> safeThis(this);
+                sampleImporter->rerollKitPad(words, influence, tuning, (int) options["pad"], (int) options["index"],
+                    options["kit"].toString(), options["mix"].toString(), options["name"].toString().substring(0, 40),
+                    [safeThis](int index) { if (safeThis != nullptr) safeThis->saveSettings(index); }, std::move(done));
+            })
+            .withEventListener("setDrumKit", [this](const juce::var& data) {
+                int ids[4] = { -1, -1, -1, -1 };
+                if (const auto* list = data["indices"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) ids[i] = (int) (*list)[i];
+                float levels[4] = { 80, 80, 80, 80 }, pans[4] = { 0, 0, 0, 0 };
+                if (const auto* list = data["levels"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) levels[i] = (float) (*list)[i];
+                if (const auto* list = data["pans"].getArray()) for (int i = 0; i < 4 && i < list->size(); ++i) pans[i] = (float) (*list)[i];
+                const juce::ScopedLock lock(processor.getCallbackLock());
+                processor.getEngine().setKit(ids, (int) data["map"], levels, pans);
             })
             .withEventListener("setMidiOptions", [this](const juce::var& data) {
                 processor.getEngine().setVelocityTouch(!data.hasProperty("touch") || (bool) data["touch"]);

@@ -2,6 +2,7 @@
 #include "SoundEngine.h"
 #include "PitchAnalysis.h"
 #include "SoundStore.h"
+#include "LicenseClient.h"
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <functional>
@@ -138,6 +139,121 @@ public:
         result->setProperty("index", draft); result->setProperty("current", 0);
         result->setProperty("variants", juce::var(juce::Array<juce::var>{ first, second }));
         return juce::var(result);
+    }
+    // A drum kit from one description. The four sounds (kick, snare, hat, percussion) are made, written to disk and
+    // installed as ordinary saved sounds straight away: they were paid for, so leaving the screen cannot lose them.
+    // Then the engine is told to play them as a kit (`map`: see SoundEngine::setKit). `persist` writes each sound's
+    // settings file. The answer is { ok, indices, percType, percName } or { ok:false, error }.
+    void generateKit(const juce::String& prompt, float influence, const GenerationOptions& tuning, int map,
+                     std::function<void(int)> persist, Done done) {
+        if (busy || draft >= 0) { done(error("Save or discard first")); return; }
+        busy = true;
+        juce::Component::SafePointer<SampleImporter> safe(this);
+        if (!juce::Thread::launch([safe, prompt, influence, tuning, map, persist, done]() mutable {
+            juce::String failure, percType, percName;
+            std::vector<juce::MemoryBlock> audio;
+            LicenseClient::generateKit(prompt, influence, failure, audio, percType, percName, tuning);
+            std::vector<PreparedGeneratedSample> pads;
+            if (failure.isEmpty() && audio.size() != 4) failure = "Generation failed - try again";
+            // The four sounds share an id, so Voices can show them as one kit and open it again later.
+            const auto kitId = juce::Uuid().toDashedString().removeCharacters("-").substring(0, 10);
+            const auto kitName = prompt.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 -").trim().substring(0, 56).trim();   // the kit string holds up to 90 characters; a longer name gives a reroll more to go on
+            const auto kitPerc = percType.length() <= 12 && percType.isNotEmpty() && percType.containsOnly("abcdefghijklmnopqrstuvwxyz") ? percType : juce::String("pad");
+            for (size_t i = 0; failure.isEmpty() && i < audio.size(); ++i) {
+                const juce::String role = i == 0 ? "Kick" : i == 1 ? "Snare" : i == 2 ? "Hat"
+                    : (percName.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -").trim().isNotEmpty()
+                        ? percName.retainCharacters("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ -").trim() : juce::String("Perc"));
+                // The sound is named after the player's words, with the pad's role kept at the end (names are cut to 22).
+                const auto words = prompt.replaceCharacters("\r\n\t", "   ").trim();
+                const auto name = words.substring(0, std::max(0, 21 - role.length())).trim() + " " + role;
+                auto prepared = ToneCard::prepareGeneratedSample(audio[i], name, true, false, false, false);
+                if (prepared.error.isNotEmpty()) { failure = prepared.error; break; }
+                prepared.kit = kitId + "|" + juce::String((int)i) + "|" + kitPerc + "|" + kitName;
+                prepared.oneShot = true; prepared.loopRegions.clear(); prepared.loopStart = prepared.loopEnd = 0; // a hit, never a loop
+                SoundEngine::calibratePrepared(prepared);
+                if (!writeSampleFiles(prepared)) { failure = "Could not save WAV"; break; }
+                pads.push_back(std::move(prepared));
+            }
+            if (!failure.isEmpty()) for (const auto& pad : pads) {   // half a kit is no kit: take its files away again
+                juce::File(pad.processedFile).deleteFile(); juce::File(pad.originalFile).deleteFile();
+            }
+            juce::MessageManager::callAsync([safe, pads = std::move(pads), failure, percType, percName, kitId, map, persist, done]() mutable {
+                if (!safe) return;
+                safe->busy = false;
+                if (failure.isNotEmpty()) { done(error(failure)); return; }
+                juce::Array<juce::var> indices;
+                for (auto& pad : pads) {
+                    pad.importDraft = false;
+                    auto installed = safe->mutate([&](SoundEngine& engine) { return engine.installGeneratedSample(std::move(pad)); });
+                    if (!(bool)installed["ok"]) { done(installed); return; }
+                    indices.add((int)installed["index"]);
+                }
+                // Installing clears the audio thread's event queue, so the kit is switched on only after all four.
+                safe->mutate([&](SoundEngine& engine) {
+                    const int ids[4] = { (int)indices[0], (int)indices[1], (int)indices[2], (int)indices[3] };
+                    engine.setKit(ids, map);
+                    return juce::var();
+                });
+                for (const auto& index : indices) persist((int)index);
+                safe->notify();
+                auto* result = new juce::DynamicObject();
+                result->setProperty("ok", true); result->setProperty("indices", indices);
+                result->setProperty("percType", percType); result->setProperty("percName", percName);
+                result->setProperty("kitId", kitId);
+                done(juce::var(result));
+            });
+        })) { busy = false; done(error("Engine busy")); }
+    }
+    // A new take of ONE pad of a saved kit (one credit): the server writes a caption about a fifth different from the
+    // kit's style, the new sound takes the old one's place (same kit string, name and mix) and the old one is deleted
+    // with its files. The answer is { ok, index } with the new sound's number, or { ok:false, error }.
+    void rerollKitPad(const juce::String& text, float influence, const GenerationOptions& tuning, int pad, int oldIndex,
+                      const juce::String& kitString, const juce::String& mix, const juce::String& name,
+                      std::function<void(int)> persist, Done done) {
+        if (busy || draft >= 0) { done(error("Save or discard first")); return; }
+        if (pad < 0 || pad > 3 || !isValidKitString(kitString) || (mix.isNotEmpty() && !isValidMixString(mix))) { done(error("Invalid kit")); return; }
+        busy = true;
+        juce::Component::SafePointer<SampleImporter> safe(this);
+        if (!juce::Thread::launch([safe, text, influence, tuning, pad, oldIndex, kitString, mix, name, persist, done]() mutable {
+            juce::String failure, percType, percName;
+            std::vector<juce::MemoryBlock> audio;
+            LicenseClient::generateKit(text, influence, failure, audio, percType, percName, tuning, pad);
+            PreparedGeneratedSample prepared;
+            if (failure.isEmpty() && audio.size() != 1) failure = "Generation failed - try again";
+            if (failure.isEmpty()) {
+                prepared = ToneCard::prepareGeneratedSample(audio[0], name, true, false, false, false);
+                if (prepared.error.isNotEmpty()) failure = prepared.error;
+                else {
+                    prepared.kit = kitString;
+                    prepared.oneShot = true; prepared.loopRegions.clear(); prepared.loopStart = prepared.loopEnd = 0;
+                    SoundEngine::calibratePrepared(prepared);
+                    if (!writeSampleFiles(prepared)) failure = "Could not save WAV";
+                }
+            }
+            juce::MessageManager::callAsync([safe, prepared = std::move(prepared), failure, oldIndex, mix, persist, done]() mutable {
+                if (!safe) return;
+                safe->busy = false;
+                if (failure.isNotEmpty()) { done(error(failure)); return; }
+                prepared.importDraft = false;
+                auto installed = safe->mutate([&](SoundEngine& engine) { return engine.installGeneratedSample(std::move(prepared)); });
+                if (!(bool)installed["ok"]) { done(installed); return; }
+                int newIndex = (int)installed["index"], old = oldIndex;
+                if (mix.isNotEmpty()) safe->mutate([&](SoundEngine& engine) {
+                    auto* meta = new juce::DynamicObject(); meta->setProperty("mix", mix);
+                    return engine.setInstrumentMeta(newIndex, juce::var(meta));
+                });
+                if (old >= 0) {   // -1: the pad was missing, there is nothing to replace
+                    if (newIndex <= old) ++old;   // the new sound was filed in front of the old one
+                    auto removed = safe->mutate([&](SoundEngine& engine) { return engine.deleteGeneratedSample(old); });
+                    if ((bool)removed["ok"]) { removeFiles(removed); if (newIndex > old) --newIndex; }
+                }
+                persist(newIndex);
+                safe->notify();
+                auto* result = new juce::DynamicObject();
+                result->setProperty("ok", true); result->setProperty("index", newIndex);
+                done(juce::var(result));
+            });
+        })) { busy = false; done(error("Engine busy")); }
     }
     // Switches the take the keys play (0 = A, 1 = B).
     juce::var audition(int which) {

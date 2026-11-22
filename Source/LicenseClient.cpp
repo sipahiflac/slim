@@ -344,6 +344,59 @@ juce::MemoryBlock LicenseClient::generate(const juce::String& text, float influe
     return audio;
 }
 
+void LicenseClient::generateKit(const juce::String& text, float influence, juce::String& error,
+                                std::vector<juce::MemoryBlock>& audio, juce::String& percType, juce::String& percName,
+                                const GenerationOptions& tuning, int rerollPad)
+{
+    audio.clear(); percType = {}; percName = {};
+    const size_t expected = rerollPad >= 0 && rerollPad <= 3 ? 1 : 4;   // a reroll makes one pad
+    constexpr size_t maxResponse = 56 * 1024 * 1024; // four sounds, base64, each under the server's 10 MB cap
+    juce::MemoryBlock response;
+    const auto service = endpoint();
+    if (service.isEmpty()) { error = "License service not configured"; return; }
+    const auto code = readStoredCode(service);
+    if (code.isEmpty()) { error = "Activate a license first"; return; }
+    auto* body = new juce::DynamicObject();
+    body->setProperty("licenseCode", code); body->setProperty("text", text);
+    body->setProperty("deviceId", deviceId());
+    body->setProperty("requestId", juce::Uuid().toDashedString()); body->setProperty("promptInfluence", influence);
+    body->setProperty("durationSeconds", tuning.durationSeconds); body->setProperty("loop", false);
+    body->setProperty("enhance", tuning.enhance);
+    body->setProperty("kit", true);
+    if (expected == 1) body->setProperty("kitPad", rerollPad);
+    const auto target = service.upToLastOccurrenceOf("/", true, false) + "melodragon-generate";
+    int status = 0;
+    auto options = juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+        .withHttpRequestCmd("POST").withExtraHeaders("Content-Type: application/json\r\nAccept: application/json\r\n")
+        .withConnectionTimeoutMs(120000).withNumRedirectsToFollow(0).withStatusCode(&status);
+    if (auto stream = juce::URL(target).withPOSTData(juce::JSON::toString(juce::var(body))).createInputStream(options))
+        stream->readIntoMemoryBlock(response, (size_t)maxResponse + 1);
+    const auto asJson = [&] {
+        return juce::JSON::parse(juce::String::fromUTF8((const char*)response.getData(), (int)std::min<size_t>(response.getSize(), maxResponse)));
+    };
+    if (status != 200 || response.getSize() == 0 || response.getSize() > maxResponse)
+    {
+        const auto failure = status == 409 && response.getSize() <= 4096 ? asJson() : juce::var();
+        error = status == 402 ? "No credits" : status == 401 ? "Check your license" : status == 429 ? "Try again later"
+              : status == 428 ? "Device identification required"
+              : status == 409 && failure["error"].toString() == "device_conflict" ? "Free code already linked"
+              : status == 409 ? "Generation already running" : "Generation failed - try again";
+        return;
+    }
+    const auto parsed = asJson();
+    const auto* list = parsed["variants"].getArray();
+    if (!(bool)parsed["ok"] || list == nullptr || (size_t)list->size() != expected) { error = "Generation failed - try again"; return; }
+    for (const auto& entry : *list)
+    {
+        juce::MemoryOutputStream decoded;
+        if (!juce::Base64::convertFromBase64(decoded, entry["audio"].toString()) || decoded.getDataSize() == 0
+            || decoded.getDataSize() > 10000000) { audio.clear(); error = "Generation failed - try again"; return; }
+        audio.push_back(decoded.getMemoryBlock());
+    }
+    percType = parsed["kit"]["percType"].toString();
+    percName = parsed["kit"]["percName"].toString();
+}
+
 void LicenseClient::generateVariants(const juce::String& text, float influence, juce::String& error,
                                      std::vector<juce::MemoryBlock>& audio, std::vector<juce::String>& kinds,
                                      const GenerationOptions& tuning, const juce::MemoryBlock* photo,
