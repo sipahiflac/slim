@@ -3,7 +3,7 @@
 #include <cmath>
 
 // Dimensionless reduced-order transducer, NOT measured Nokia parameters.
-// See SPEAKER_MODEL.md for equations, sources, assumptions and validation.
+// See docs/SPEAKER_MODEL.md for equations, sources, assumptions and validation.
 class SpeakerDynamics
 {
 public:

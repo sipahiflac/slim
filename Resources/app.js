@@ -5120,6 +5120,9 @@ window.addEventListener('keydown', (e) => {
     }
     if(currentState===ScreenState.AI_PROMPT) {
         if(demoTyping){if(e.key==='Escape')cancelDemoTyping();e.preventDefault();return;} // a macro is typing
+        // The text box lost the focus (a browser may refuse the focus() after a screen change): take it back now, so
+        // this very key press still lands in it instead of ending in the system's error beep.
+        if(document.activeElement!==aiPromptInput&&!e.ctrlKey&&!e.metaKey&&!e.altKey)aiPromptInput.focus();
         if(e.key==='Tab'){if(!kitPromptMode)openAiOptions();e.preventDefault();return;}
         if((e.key==='Backspace'||e.key==='Delete') && !aiPromptInput.value.length){leaveSoundMaker();e.preventDefault();return;}
         if(e.key==='Enter') {if(kitPromptMode)startKit();else generateAiSample();e.preventDefault();}
@@ -5480,6 +5483,16 @@ window.addEventListener('keydown', (e) => {
     }
 });
 
+// A key that nothing above used must not reach the system: macOS answers a key press that no one handled with its error
+// beep (it happened on the note keys that have no note, and on any key while no text box has the focus). Text boxes
+// keep their own keys, and shortcuts (Ctrl/Cmd/Alt, F keys) are left alone.
+window.addEventListener('keydown',e=>{
+    if(e.defaultPrevented||e.ctrlKey||e.metaKey||e.altKey||e.isComposing)return;
+    const active=document.activeElement;
+    if(active&&(active.tagName==='INPUT'||active.tagName==='TEXTAREA'||active.isContentEditable))return;
+    if(/^F\d{1,2}$/.test(e.key))return;
+    e.preventDefault();
+});
 window.addEventListener('keyup', (e) => {
     releaseBilliardsCharge(e.code||e.key);
     releaseSnakeDirection(e.key);
