@@ -623,7 +623,7 @@ void CrystalAudioProcessorEditor::renderParallelHatch (juce::Graphics& g,
     if (hatchAlpha <= 0.01f) return;
     const float k0 = *processor.apvts.getRawParameterValue ("knob0");
     const float k1 = *processor.apvts.getRawParameterValue ("knob1");
-    const float k2 = (orgOverride >= 0.0f) ? orgOverride : *processor.apvts.getRawParameterValue ("knob2");
+    const float k2 = (orgOverride >= 0.0f) ? orgOverride : processor.apvts.getRawParameterValue ("knob2")->load();
     const float dr = *processor.apvts.getRawParameterValue ("drive");
     const float amt = std::min (1.0f, k0 * 0.78f + dr * 0.28f);
     if (amt <= 0.02f) return;
@@ -847,8 +847,8 @@ void CrystalAudioProcessorEditor::renderMainShape (juce::Graphics& g, const Crys
 {
     if (scaleMult <= 0.01f) return;
     const float k1 = *processor.apvts.getRawParameterValue ("knob1");
-    const float org = orgOverride >= 0.0f ? orgOverride : *processor.apvts.getRawParameterValue ("knob2");
-    const float tilt = (bootActive && bootTime < 2.25f) ? 0.0f : *processor.apvts.getRawParameterValue ("tilt");
+    const float org = orgOverride >= 0.0f ? orgOverride : processor.apvts.getRawParameterValue ("knob2")->load();
+    const float tilt = (bootActive && bootTime < 2.25f) ? 0.0f : processor.apvts.getRawParameterValue ("tilt")->load();
     const float filterAmt = clamp01 ((std::abs (tilt) - 0.05f) / 0.95f); // 0 = acik, 1 = tam kapali filtre
     const float fillAlpha = 1.0f - 0.90f * filterAmt;                     // Tam kapali filtrede %90 seffaf (%10 dolgu)!
 
@@ -1547,7 +1547,7 @@ void CrystalAudioProcessorEditor::paint (juce::Graphics& g)
     }
 
     const bool inSoloPhase = bootActive && bootTime < 2.14f;
-    const float org = inSoloPhase ? bootVisualOrg : *processor.apvts.getRawParameterValue ("knob2");
+    const float org = inSoloPhase ? bootVisualOrg : processor.apvts.getRawParameterValue ("knob2")->load();
     const int polyOv = inSoloPhase ? bootVisualPoly : -1;
     const float orgOv = inSoloPhase ? bootVisualOrg : -1.0f;
 
