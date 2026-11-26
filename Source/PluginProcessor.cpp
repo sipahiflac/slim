@@ -9,6 +9,7 @@ CrystalAudioProcessor::CrystalAudioProcessor()
       apvts (*this, nullptr, "WildinParams", createParameterLayout())
 {
     loadPresetsFromDisk();
+    loadEditorSizePreference();
     if (! savedPresets.empty())
         applyPreset (savedPresets.front(), false);
 
@@ -410,11 +411,38 @@ void CrystalAudioProcessor::savePresetsToDisk() const
     root.writeTo (getPresetsFile());
 }
 
+void CrystalAudioProcessor::saveEditorSizePreference (int w, int h)
+{
+    lastEditorW = std::clamp (w, 238, 1360);
+    lastEditorH = std::clamp (h, 269, 1536);
+    auto file = getPresetsFile().getSiblingFile ("ui_size.txt");
+    file.replaceWithText (juce::String (lastEditorW) + "x" + juce::String (lastEditorH));
+}
+
+void CrystalAudioProcessor::loadEditorSizePreference()
+{
+    auto file = getPresetsFile().getSiblingFile ("ui_size.txt");
+    if (! file.existsAsFile()) return;
+    auto parts = juce::StringArray::fromTokens (file.loadFileAsString().trim(), "x", "");
+    if (parts.size() == 2)
+    {
+        const int w = parts[0].getIntValue();
+        const int h = parts[1].getIntValue();
+        if (w >= 238 && w <= 1360 && h >= 269 && h <= 1536)
+        {
+            lastEditorW = w;
+            lastEditorH = h;
+        }
+    }
+}
+
 void CrystalAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())
     {
         xml->setAttribute ("wildinSeed", currentSeed.load (std::memory_order_relaxed));
+        xml->setAttribute ("editorW", lastEditorW);
+        xml->setAttribute ("editorH", lastEditorH);
         copyXmlToBinary (*xml, destData);
     }
 }
@@ -429,6 +457,16 @@ void CrystalAudioProcessor::setStateInformation (const void* data, int sizeInByt
                 currentSeed.store (xml->getIntAttribute ("wildinSeed", currentSeed.load()) & 32767, std::memory_order_relaxed);
             else if (xml->hasAttribute ("crystalSeed"))
                 currentSeed.store (xml->getIntAttribute ("crystalSeed", currentSeed.load()) & 32767, std::memory_order_relaxed);
+            if (xml->hasAttribute ("editorW") && xml->hasAttribute ("editorH"))
+            {
+                const int w = xml->getIntAttribute ("editorW", lastEditorW);
+                const int h = xml->getIntAttribute ("editorH", lastEditorH);
+                if (w >= 238 && w <= 1360 && h >= 269 && h <= 1536)
+                {
+                    lastEditorW = w;
+                    lastEditorH = h;
+                }
+            }
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
         }
     }

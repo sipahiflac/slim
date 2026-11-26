@@ -5,6 +5,7 @@
 #include <cstring>
 #include <map>
 #include <algorithm>
+#include <thread>
 
 namespace
 {
@@ -122,10 +123,13 @@ CrystalAudioProcessorEditor::~CrystalAudioProcessorEditor()
 
 void CrystalAudioProcessorEditor::resized()
 {
-    if (getWidth() >= 238 && getHeight() >= 269)
+    // Sadece pencere ekrana oturup acilis DPI/host el sıkısmasi bittikten sonra boyutu kaydet!
+    // Boylece Ableton ac/kapa sirasindaki gecici onSize/scaleFactor kucultmeleri boyutu asla bozmaz.
+    if (openStableTicks >= 5 && isShowing() && hasPaintedOnce
+        && getWidth() >= 238 && getHeight() >= 269)
     {
-        processor.lastEditorW = getWidth();
-        processor.lastEditorH = getHeight();
+        if (std::abs (getWidth() - processor.lastEditorW) >= 4)
+            processor.saveEditorSizePreference (getWidth(), getHeight());
     }
     updateLicenseInputLayout();
     repaint();
@@ -191,6 +195,41 @@ void CrystalAudioProcessorEditor::submitLicenseKey()
         processor.triggerMechanicalClick (-1);
         repaint();
     }
+}
+
+void CrystalAudioProcessorEditor::startVersionCheck()
+{
+    if (updateState == UpdateState::Checking) return;
+    updateState = UpdateState::Checking;
+    repaint();
+
+    juce::Component::SafePointer<CrystalAudioProcessorEditor> safeThis (this);
+    const juce::String curVer (CrystalAudioProcessor::kPluginVersion);
+    std::thread ([safeThis, curVer] ()
+    {
+        const auto res = CrystalLicense::checkForUpdateSync (curVer);
+        juce::MessageManager::callAsync ([safeThis, res] ()
+        {
+            if (safeThis == nullptr) return;
+            if (! res.ok)
+            {
+                safeThis->updateState = UpdateState::Error;
+            }
+            else if (res.newer)
+            {
+                safeThis->updateState = UpdateState::UpdateAvailable;
+                safeThis->latestVersionStr = res.latest;
+                safeThis->updateDownloadUrl = res.downloadUrl;
+            }
+            else
+            {
+                safeThis->updateState = UpdateState::UpToDate;
+                safeThis->latestVersionStr = res.latest;
+                safeThis->updateDownloadUrl.clear();
+            }
+            safeThis->repaint();
+        });
+    }).detach();
 }
 
 void CrystalAudioProcessorEditor::triggerKnobSnapAnimation (bool fromZero)
@@ -1357,14 +1396,36 @@ void CrystalAudioProcessorEditor::renderInfoDrawer (juce::Graphics& g, const Cry
     g.setColour (pal.ink.withMultipliedAlpha (0.10f));
     g.drawLine (padX, kInfoY + 33.0f, padX + innerW, kInfoY + 33.0f, 1.0f);
 
-    // Versiyon kontrol pill dugmesi
+    // Versiyon kontrol pill dugmesi (gercek admin-sba-8f92 / Supabase kontrolu)
     const juce::Rectangle<float> updRect (padX, kInfoY + 40.0f, innerW, 23.0f);
     const bool updHov = (hoverUI == "info-update");
-    g.setColour ((versionChecked ? pal.contrast : pal.ink).withMultipliedAlpha (updHov ? 0.15f : 0.07f));
-    g.fillRoundedRectangle (updRect, 11.5f);
-    g.setColour ((versionChecked ? pal.contrast : pal.ink).withMultipliedAlpha (versionChecked ? 0.94f : 0.82f));
+    const bool accentPill = (updateState == UpdateState::UpToDate || updateState == UpdateState::UpdateAvailable);
+    const bool solidAccent = (updateState == UpdateState::UpdateAvailable);
+
+    if (solidAccent)
+    {
+        g.setColour (pal.contrast.withMultipliedAlpha (updHov ? 0.98f : 0.88f));
+        g.fillRoundedRectangle (updRect, 11.5f);
+        g.setColour (pal.paper.withMultipliedAlpha (0.98f));
+    }
+    else
+    {
+        g.setColour ((accentPill ? pal.contrast : pal.ink).withMultipliedAlpha (updHov ? 0.15f : 0.07f));
+        g.fillRoundedRectangle (updRect, 11.5f);
+        g.setColour ((accentPill ? pal.contrast : pal.ink).withMultipliedAlpha (accentPill ? 0.94f : 0.82f));
+    }
+
+    juce::String updLabel = "Check version";
+    switch (updateState)
+    {
+        case UpdateState::Checking:        updLabel = "Checking..."; break;
+        case UpdateState::UpToDate:        updLabel = "Up to date"; break;
+        case UpdateState::UpdateAvailable: updLabel = "Update v" + latestVersionStr; break;
+        case UpdateState::Error:           updLabel = "Check failed"; break;
+        default: break;
+    }
     g.setFont (makeUiFont (11.0f, true));
-    g.drawText (versionChecked ? "Up to date" : "Check version", updRect, juce::Justification::centred);
+    g.drawText (updLabel, updRect, juce::Justification::centred);
 
     if (processor.isLicensed())
     {
@@ -1933,7 +1994,14 @@ void CrystalAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
             processor.triggerMechanicalClick (1);
             updateLicenseInputLayout();
         }
-        else if (ui == "info-update") { versionChecked = true; processor.triggerMechanicalClick (1); }
+        else if (ui == "info-update")
+        {
+            processor.triggerMechanicalClick (1);
+            if (updateState == UpdateState::UpdateAvailable && CrystalLicense::isOwnDownloadPage (updateDownloadUrl))
+                juce::URL (updateDownloadUrl).launchInDefaultBrowser();
+            else
+                startVersionCheck();
+        }
         else if (ui == "info-deact")
         {
             processor.deactivateLicense();
@@ -2153,6 +2221,22 @@ void CrystalAudioProcessorEditor::timerCallback()
     }
 
     timeSec += dt;
+
+    // Pencere ekranda gorunur olduktan sonra kisa surede Ableton'in DPI attach kucultmesini duzelt!
+    if (isShowing() && hasPaintedOnce)
+    {
+        if (openStableTicks < 10)
+            ++openStableTicks;
+
+        if (! restoredSizeAfterAttach && openStableTicks == 2)
+        {
+            restoredSizeAfterAttach = true;
+            const int wantW = std::clamp (processor.lastEditorW, 238, 1360);
+            const int wantH = std::clamp (juce::roundToInt (static_cast<double> (wantW) * static_cast<double> (kH) / static_cast<double> (kW)), 269, 1536);
+            if (std::abs (getWidth() - wantW) >= 4)
+                setSize (wantW, wantH);
+        }
+    }
 
     // Pixel-perfect 4-lob logo hover tonu (wiggle yok, sadece uzerine gelinen lobun tonu degisir!)
     float targetLobe[4] { 0.0f, 0.0f, 0.0f, 0.0f };

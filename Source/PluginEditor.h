@@ -103,6 +103,7 @@ private:
 
     void updateLicenseInputLayout();
     void submitLicenseKey();
+    void startVersionCheck();
     void triggerKnobSnapAnimation (bool fromZero = false);
     float getMaxExplorerScroll() const noexcept;
 
@@ -164,7 +165,10 @@ private:
     bool explorerOpen = false;
     float explorerScrollY = 0.0f;
     bool infoOpen = false;
-    bool versionChecked = false;
+    enum class UpdateState { Idle, Checking, UpToDate, UpdateAvailable, Error };
+    UpdateState updateState = UpdateState::Idle;
+    juce::String latestVersionStr;
+    juce::String updateDownloadUrl;
     juce::Point<float> lastMouse;
     juce::Point<float> mouseLogical { -100.0f, -100.0f };
     float lobeHover[4] { 0.0f, 0.0f, 0.0f, 0.0f };
@@ -187,6 +191,8 @@ private:
     bool bootWaitingForShow = false;
     bool hasPaintedOnce = false;
     float bootWaitGuardSec = 0.0f;
+    int openStableTicks = 0;
+    bool restoredSizeAfterAttach = false;
     bool bootActive = false;
     float bootTime = 0.0f;
     int bootShuffleStage = 0;

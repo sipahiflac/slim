@@ -1,7 +1,9 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include <cstdint>
+#include <iterator>
 
 namespace CrystalLicense
 {
@@ -78,5 +80,103 @@ namespace CrystalLicense
     {
         auto file = getLicenseFile();
         if (file.existsAsFile()) file.deleteFile();
+    }
+
+    // =========================================================================
+    // ONLINE VERSION CHECK (2G / admin-sba-8f92 Supabase Edge Function)
+    // =========================================================================
+    struct UpdateCheckResult
+    {
+        bool ok = false;
+        bool newer = false;
+        juce::String latest;
+        juce::String downloadUrl;
+        juce::String notes;
+    };
+
+    inline bool parseVersionTriple (const juce::String& text, int (&parts)[3])
+    {
+        const auto pieces = juce::StringArray::fromTokens (text.trim(), ".", {});
+        if (pieces.size() != 3) return false;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (pieces[i].isEmpty() || ! pieces[i].containsOnly ("0123456789") || pieces[i].length() > 3)
+                return false;
+            parts[i] = pieces[i].getIntValue();
+        }
+        return true;
+    }
+
+    inline bool isOwnDownloadPage (const juce::String& link)
+    {
+        if (! link.startsWith ("https://")) return false;
+        const auto host = juce::URL (link).getDomain().toLowerCase();
+        return host == "scrapbrainaudio.com" || host.endsWith (".scrapbrainaudio.com");
+    }
+
+    inline UpdateCheckResult checkForUpdateSync (const juce::String& currentVersion)
+    {
+        UpdateCheckResult res;
+        res.latest = currentVersion;
+
+        // Dev test hook (2G ile ayni: SCRAPBRAIN_FAKE_UPDATE=1.0.9)
+        const auto fake = juce::SystemStats::getEnvironmentVariable ("SCRAPBRAIN_FAKE_UPDATE", {}).trim();
+        int fakeParts[3] {}, curParts[3] {};
+        if (fake.isNotEmpty() && parseVersionTriple (fake, fakeParts) && parseVersionTriple (currentVersion, curParts)
+            && std::lexicographical_compare (std::begin (curParts), std::end (curParts), std::begin (fakeParts), std::end (fakeParts)))
+        {
+            res.ok = true;
+            res.newer = true;
+            res.latest = fake;
+            res.downloadUrl = "https://download.scrapbrainaudio.com/Wildin.zip";
+            res.notes = "Simulated update";
+            return res;
+        }
+
+        auto* body = new juce::DynamicObject();
+        body->setProperty ("product", "wildin");
+       #if JUCE_MAC
+        body->setProperty ("platform", "macos");
+       #else
+        body->setProperty ("platform", "windows");
+       #endif
+        body->setProperty ("version", currentVersion);
+
+        static constexpr const char* kUpdateEndpoint = "https://vwsjdelvvrlwbdixxccp.supabase.co/functions/v1/melodragon-update";
+        int status = 0;
+        juce::MemoryBlock response;
+        const auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
+            .withHttpRequestCmd ("POST")
+            .withExtraHeaders ("Content-Type: application/json\r\nAccept: application/json\r\n")
+            .withConnectionTimeoutMs (9000)
+            .withNumRedirectsToFollow (0)
+            .withStatusCode (&status);
+
+        if (auto stream = juce::URL (kUpdateEndpoint).withPOSTData (juce::JSON::toString (juce::var (body))).createInputStream (options))
+            stream->readIntoMemoryBlock (response, 4096);
+
+        if (status != 200 || response.getSize() == 0)
+            return res;
+
+        const auto answer = juce::JSON::parse (juce::String::fromUTF8 (static_cast<const char*> (response.getData()),
+                                                                        static_cast<int> (response.getSize())));
+        if (! answer.isObject() || ! static_cast<bool> (answer["ok"]))
+            return res;
+
+        int current[3] {}, latest[3] {};
+        const auto latestText = answer["latest"].toString();
+        const auto link = answer["url"].toString();
+        const bool newer = static_cast<bool> (answer["newer"])
+            && parseVersionTriple (currentVersion, current)
+            && parseVersionTriple (latestText, latest)
+            && std::lexicographical_compare (std::begin (current), std::end (current), std::begin (latest), std::end (latest))
+            && isOwnDownloadPage (link);
+
+        res.ok = true;
+        res.newer = newer;
+        res.latest = newer ? latestText : currentVersion;
+        res.downloadUrl = newer ? link : juce::String {};
+        res.notes = newer ? answer["notes"].toString().substring (0, 60) : juce::String {};
+        return res;
     }
 } // namespace CrystalLicense

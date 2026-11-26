@@ -76,9 +76,11 @@ public:
 
     // Boot animasyonu uygulama/eklenti oturumu basina yalnizca 1 kez oynar!
     bool hasPlayedBootAnim = false;
-    // Son pencere boyutu (Ableton Auto-Scale ac/kapa ve yeniden acilista korunur)
+    // Son pencere boyutu (DAW projesi + diskte kalici olarak hatirlanir)
     int lastEditorW = 340;
     int lastEditorH = 384;
+    void saveEditorSizePreference (int w, int h);
+    void loadEditorSizePreference();
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
